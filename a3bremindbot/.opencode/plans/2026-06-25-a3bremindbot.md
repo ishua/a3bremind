@@ -55,8 +55,9 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
 ## Фаза 2: domain — бизнес-логика
 
 > Реализация: main loop, ProcessPending, DailyReset, NextInstance. Без Telegram — уведомления через интерфейс Notifier.
+> Выполнено: 2.1–2.8. Изменён порядок (2.7 перенесена перед 2.4 из-за зависимости). Реализован scheduler, processPending, dailyReset, nextInstance, 11 domain-тестов.
 
-- [ ] 2.1 Определить `Notifier` interface
+- [x] 2.1 Определить `Notifier` interface
   - Файл: `/internal/domain/notifier.go`
   - ```go
     type Notifier interface {
@@ -66,7 +67,7 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
   - Domain ничего не знает о Telegram. `int64` — это `User.TelegramID` из store.
   - Интерфейс будет реализован в Фазе 3 (bot).
 
-- [ ] 2.2 Определить доменные переменные конфигурации
+- [x] 2.2 Определить доменные переменные конфигурации
   - Файл: `/internal/domain/config.go`
   - Переменные (не константы) — чтобы тесты могли переопределять:
     ```go
@@ -78,7 +79,7 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
     )
     ```
 
-- [ ] 2.3 Реализовать `Scheduler`
+- [x] 2.3 Реализовать `Scheduler`
   - Файл: `/internal/domain/scheduler.go`
   - ```go
     type Scheduler struct {
@@ -100,7 +101,13 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
     1. `processPending(now)` — найти и обработать pending instances
     2. `checkDailyReset(now)` — проверить нужен ли сброс дня
 
-- [ ] 2.4 ProcessPending
+- [x] 2.7 Добавить недостающие методы в store
+  - `store.GetUserByID(userID string) (User, error)` — в `user.go`, нужен для ProcessPending
+  - `store.GetAllUsers() ([]User, error)` — в `user.go`, нужен для checkDailyReset
+  - Написать тесты для обоих методов
+  - `store.GetReminderByID` — уже есть как `GetByID`, ничего не добавлять
+
+- [x] 2.4 ProcessPending
   - Файл: `/internal/domain/pending.go`
   - Алгоритм для каждого pending instance:
     1. Загрузить `Reminder` по `instance.ReminderID` через `store.GetByID`
@@ -115,7 +122,7 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
 
   **Важно:** missed выставляется после отправки последнего сообщения. Пользователь всегда видит финальное уведомление перед тем как instance уходит в missed. Отдельного сообщения `❌` нет — статус missed выставляется тихо после последней попытки.
 
-- [ ] 2.5 DailyReset
+- [x] 2.5 DailyReset
   - Файл: `/internal/domain/dailyreset.go`
   - `DailyReset(db *sql.DB, userID string) error`:
     - Загрузить все reminders пользователя (`store.GetAll(userID)`)
@@ -134,7 +141,7 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
 
   **Важно:** проверка `last_reset_at` по дате (не по времени) в timezone пользователя защищает от повторного срабатывания в течение той же минуты при каждом тике.
 
-- [ ] 2.6 NextInstance
+- [x] 2.6 NextInstance
   - Файл: `/internal/domain/nextinstance.go`
   - `NextInstance(db *sql.DB, instance store.ReminderInstance) error`
   - Вызывается только после `done` или `skipped` — не после `missed`
@@ -146,13 +153,9 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
   - Если `instance.TimeIndex` последний в серии → цепочка завершена, ничего не создаём
     - Это одинаково для `daily` и `once`: следующий Instance для `daily` создаст DailyReset завтра в 03:00; для `once` больше ничего не происходит
 
-- [ ] 2.7 Добавить недостающие методы в store
-  - `store.GetUserByID(userID string) (User, error)` — в `user.go`, нужен для ProcessPending
-  - `store.GetAllUsers() ([]User, error)` — в `user.go`, нужен для checkDailyReset
-  - Написать тесты для обоих методов
-  - `store.GetReminderByID` — уже есть как `GetByID`, ничего не добавлять
+-
 
-- [ ] 2.8 Юнит-тесты domain
+- [x] 2.8 Юнит-тесты domain
   - Файл: `/internal/domain/domain_test.go`
   - Mock Notifier:
     ```go

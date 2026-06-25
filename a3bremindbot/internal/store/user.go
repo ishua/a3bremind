@@ -42,6 +42,43 @@ func GetByTelegramID(db *sql.DB, telegramID int64) (User, error) {
 	return scanUser(row)
 }
 
+// GetUserByID retrieves a user by their internal ID.
+func GetUserByID(db *sql.DB, userID string) (User, error) {
+	const query = `SELECT id, telegram_id, timezone, paused, last_reset_at, created_at FROM users WHERE id = ?`
+
+	row := db.QueryRow(query, userID)
+	return scanUser(row)
+}
+
+// GetAllUsers retrieves all users from the database.
+func GetAllUsers(db *sql.DB) ([]User, error) {
+	const query = `SELECT id, telegram_id, timezone, paused, last_reset_at, created_at FROM users`
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("get all users: %w", err)
+	}
+	defer rows.Close()
+
+	var result []User
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration: %w", err)
+	}
+
+	if result == nil {
+		result = []User{}
+	}
+
+	return result, nil
+}
+
 // SetTimezone updates the timezone for a user.
 func SetTimezone(db *sql.DB, userID string, tz string) error {
 	const query = `UPDATE users SET timezone = ? WHERE id = ?`

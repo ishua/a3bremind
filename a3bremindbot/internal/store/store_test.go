@@ -671,6 +671,42 @@ func TestTimeIndexBoundaries(t *testing.T) {
 	assert.Len(t, active, 2)
 }
 
+func TestGetUserByID(t *testing.T) {
+	db := newTestDB(t)
+
+	u, err := GetOrCreate(db, 700)
+	require.NoError(t, err)
+
+	got, err := GetUserByID(db, u.ID)
+	require.NoError(t, err)
+	assert.Equal(t, u.ID, got.ID)
+	assert.Equal(t, int64(700), got.TelegramID)
+}
+
+func TestGetUserByID_NotFound(t *testing.T) {
+	db := newTestDB(t)
+
+	_, err := GetUserByID(db, "nonexistent")
+	assert.ErrorContains(t, err, "not found")
+}
+
+func TestGetAllUsers(t *testing.T) {
+	db := newTestDB(t)
+
+	// No users yet.
+	all, err := GetAllUsers(db)
+	require.NoError(t, err)
+	assert.Empty(t, all)
+
+	_, _ = GetOrCreate(db, 800)
+	_, _ = GetOrCreate(db, 801)
+	_, _ = GetOrCreate(db, 802)
+
+	all, err = GetAllUsers(db)
+	require.NoError(t, err)
+	assert.Len(t, all, 3)
+}
+
 func TestDeleteReminderCascadesNothing(t *testing.T) {
 	// SQLite foreign key constraints are not enforced by default in modernc.org/sqlite
 	// unless PRAGMA foreign_keys = ON. We don't enable it, so deleting a reminder
