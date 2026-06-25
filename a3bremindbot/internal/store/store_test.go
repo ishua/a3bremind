@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"sync"
 	"testing"
 	"time"
 
@@ -10,10 +11,13 @@ import (
 )
 
 // newTestDB opens an in-memory SQLite database and runs migration.
+// It sets MaxOpenConns(1) so that all operations use the same connection,
+// which is required for :memory: databases where each connection has its own DB.
 func newTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := InitDB("sqlite", ":memory:")
 	require.NoError(t, err)
+	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { db.Close() })
 	return db
 }
@@ -569,6 +573,43 @@ func TestAddMessageID(t *testing.T) {
 	assert.Equal(t, []int{100, 200}, got.MessageIDs)
 	assert.GreaterOrEqual(t, got.UpdatedAt.Unix(), originalUpdatedAt.Unix(),
 		"updated_at should be >= original")
+}
+
+func TestAddMessageID_Concurrent(t *testing.T) {
+	db := newTestDB(t)
+
+	u, _ := GetOrCreate(db, 31)
+	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Concurrent test", Times: []string{"09:00"}, Repeat: "daily"})
+	inst, _ := CreateInstance(db, ReminderInstance{ReminderID: r.ID, TimeIndex: 0, ScheduledAt: time.Now(), Status: "pending"})
+
+	const numGoroutines = 20
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines)
+
+	for i := 0; i < numGoroutines; i++ {
+		msgID := i + 1
+		go func() {
+			defer wg.Done()
+			err := AddMessageID(db, inst.ID, msgID)
+			assert.NoError(t, err)
+		}()
+	}
+
+	wg.Wait()
+
+	got, err := GetInstanceByID(db, inst.ID)
+	require.NoError(t, err)
+	// Should have exactly numGoroutines unique message IDs.
+	assert.Len(t, got.MessageIDs, numGoroutines)
+
+	// Each message ID from 1..numGoroutines should be present.
+	seen := make(map[int]bool)
+	for _, mid := range got.MessageIDs {
+		assert.False(t, seen[mid], "duplicate message_id %d", mid)
+		seen[mid] = true
+		assert.GreaterOrEqual(t, mid, 1)
+		assert.LessOrEqual(t, mid, numGoroutines)
+	}
 }
 
 func TestAddMessageID_NotFound(t *testing.T) {

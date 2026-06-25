@@ -30,6 +30,9 @@ func CreateInstance(db *sql.DB, i ReminderInstance) (ReminderInstance, error) {
 	if i.Status == "" {
 		i.Status = "pending"
 	}
+	if i.MessageIDs == nil {
+		i.MessageIDs = []int{}
+	}
 	now := time.Now().Unix()
 	i.CreatedAt = time.Unix(now, 0)
 	i.UpdatedAt = time.Unix(now, 0)
@@ -154,36 +157,13 @@ func SetDoneAt(db *sql.DB, id string, t time.Time) error {
 	return checkRowsAffected(res, "reminder_instance", id)
 }
 
-// AddMessageID appends a message_id to the instance's message_ids JSON array.
+// AddMessageID appends a message_id to the instance's message_ids JSON array atomically via json_set.
 func AddMessageID(db *sql.DB, id string, messageID int) error {
-	// Read current message_ids.
-	const getQuery = `SELECT message_ids FROM reminder_instances WHERE id = ?`
-	var messageIDsJSON string
-	err := db.QueryRow(getQuery, id).Scan(&messageIDsJSON)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return fmt.Errorf("reminder_instance %q not found", id)
-		}
-		return fmt.Errorf("read message_ids: %w", err)
-	}
-
-	var ids []int
-	if err := json.Unmarshal([]byte(messageIDsJSON), &ids); err != nil {
-		return fmt.Errorf("unmarshal message_ids: %w", err)
-	}
-
-	ids = append(ids, messageID)
-
-	updatedJSON, err := json.Marshal(ids)
-	if err != nil {
-		return fmt.Errorf("marshal message_ids: %w", err)
-	}
-
-	const updateQuery = `UPDATE reminder_instances SET message_ids = ?, updated_at = ? WHERE id = ?`
+	const query = `UPDATE reminder_instances SET message_ids = json_set(message_ids, '$[#]', ?), updated_at = ? WHERE id = ?`
 	now := time.Now().Unix()
-	res, err := db.Exec(updateQuery, string(updatedJSON), now, id)
+	res, err := db.Exec(query, messageID, now, id)
 	if err != nil {
-		return fmt.Errorf("update message_ids: %w", err)
+		return fmt.Errorf("add message_id: %w", err)
 	}
 	return checkRowsAffected(res, "reminder_instance", id)
 }

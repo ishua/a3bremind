@@ -49,10 +49,11 @@
   - test helper: `newTestDB(t) *sql.DB` — открывает in-memory SQLite, запускает миграцию
   - покрыть edge cases: дубликаты, отсутствующие записи, граничные значения
 
-- [ ] 1.7 Сделать AddMessageID атомарным через SQLite json_set
+- [x] 1.7 Сделать AddMessageID атомарным через SQLite json_set
   - заменить read-modify-write (SELECT + unmarshal + append + marshal + UPDATE) на один UPDATE с json_set(message_ids, '$[#]', ?)
-  - убрать импорт encoding/json из instance.go (если больше не нужен)
+  - убрать импорт encoding/json из instance.go (если больше не нужен) — остался, нужен в CreateInstance (marshal) и scanReminderInstance (unmarshal)
   - добавить тест TestAddMessageID_Concurrent с запуском parallel горутин на одной записи
+  - дополнительно: инициализировать i.MessageIDs = []int{} в CreateInstance, чтобы json маршалился в "[]", а не "null"; SetMaxOpenConns(1) в newTestDB для :memory:
 
 ## Решения и договорённости
 
