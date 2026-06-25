@@ -130,6 +130,39 @@ func GetInstanceByMessageID(db *sql.DB, messageID int) (ReminderInstance, error)
 	return ReminderInstance{}, fmt.Errorf("instance with message_id %d not found", messageID)
 }
 
+// GetInstancesByUserAndDay retrieves all instances for a user on a specific day in their timezone.
+// It computes the start/end of the day in the user's timezone and converts to UTC for the SQL query.
+func GetInstancesByUserAndDay(db *sql.DB, userID string, date time.Time, loc *time.Location) ([]ReminderInstance, error) {
+	year, month, day := date.In(loc).Date()
+	startOfDay := time.Date(year, month, day, 0, 0, 0, 0, loc)
+	endOfDay := startOfDay.Add(24 * time.Hour)
+
+	const query = `SELECT ri.id, ri.reminder_id, ri.time_index, ri.scheduled_at, ri.done_at, ri.status, ri.message_ids, ri.created_at, ri.updated_at
+		FROM reminder_instances ri
+		JOIN reminders r ON r.id = ri.reminder_id
+		WHERE r.user_id = ? AND ri.scheduled_at >= ? AND ri.scheduled_at < ?
+		ORDER BY ri.scheduled_at ASC`
+
+	rows, err := db.Query(query, userID, startOfDay.Unix(), endOfDay.Unix())
+	if err != nil {
+		return nil, fmt.Errorf("get instances by user and day: %w", err)
+	}
+	defer rows.Close()
+
+	return scanReminderInstances(rows)
+}
+
+// SetInstanceScheduledAt updates the scheduled_at and updated_at fields of a reminder instance.
+func SetInstanceScheduledAt(db *sql.DB, id string, t time.Time) error {
+	const query = `UPDATE reminder_instances SET scheduled_at = ?, updated_at = ? WHERE id = ?`
+	now := time.Now().Unix()
+	res, err := db.Exec(query, t.Unix(), now, id)
+	if err != nil {
+		return fmt.Errorf("set instance scheduled_at: %w", err)
+	}
+	return checkRowsAffected(res, "reminder_instance", id)
+}
+
 // GetLastByReminder retrieves the last instance for a given reminder and time_index (for rescheduler).
 func GetLastByReminder(db *sql.DB, reminderID string, timeIndex int) (ReminderInstance, error) {
 	const query = `SELECT id, reminder_id, time_index, scheduled_at, done_at, status, message_ids, created_at, updated_at

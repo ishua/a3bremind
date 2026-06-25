@@ -74,7 +74,7 @@ func (h *Handler) handleSettings(update tgbotapi.Update) {
 func (h *Handler) handleAdd(update tgbotapi.Update) {
 	text := update.Message.Text
 
-	label, repeat, timeStr, err := parseAddCommand(text)
+	label, repeat, times, minGap, err := parseAddCommand(text)
 	if err != nil {
 		h.sendText(update.Message.Chat.ID, err.Error())
 		return
@@ -103,7 +103,8 @@ func (h *Handler) handleAdd(update tgbotapi.Update) {
 		UserID: user.ID,
 		Label:  label,
 		Repeat: repeat,
-		Times:  []string{timeStr},
+		Times:  times,
+		MinGap: minGap,
 	}
 
 	created, err := store.Create(h.db, reminder)
@@ -112,9 +113,9 @@ func (h *Handler) handleAdd(update tgbotapi.Update) {
 		return
 	}
 
-	// Вычисляем ScheduledAt = сегодня + HH:MM в timezone пользователя
+	// Вычисляем ScheduledAt = сегодня + HH:MM в timezone пользователя для первого времени
 	now := time.Now().In(loc)
-	parsedTime, _ := time.ParseInLocation("15:04", timeStr, loc)
+	parsedTime, _ := time.ParseInLocation("15:04", times[0], loc)
 	scheduledAt := time.Date(
 		now.Year(), now.Month(), now.Day(),
 		parsedTime.Hour(), parsedTime.Minute(), 0, 0,
@@ -134,24 +135,34 @@ func (h *Handler) handleAdd(update tgbotapi.Update) {
 		return
 	}
 
-	h.sendText(update.Message.Chat.ID,
-		fmt.Sprintf("✅ Напоминание «%s» создано. Первое — сегодня в %s.", label, timeStr))
+	// Формируем ответ о создании
+	if len(times) == 1 {
+		h.sendText(update.Message.Chat.ID,
+			fmt.Sprintf("✅ Напоминание «%s» создано. Первое — сегодня в %s.", label, times[0]))
+	} else {
+		gapStr := ""
+		if minGap != nil {
+			gapStr = fmt.Sprintf(" (gap: %d мин.)", *minGap)
+		}
+		h.sendText(update.Message.Chat.ID,
+			fmt.Sprintf("✅ Напоминание «%s» создано. Времена: %s%s. Первое — сегодня в %s.", label, strings.Join(times, " "), gapStr, times[0]))
+	}
 }
 
-// parseAddCommand парсит команду /add "Label" daily|once HH:MM.
-// Возвращает label, repeat, time, ошибку.
-func parseAddCommand(text string) (label, repeat, timeStr string, err error) {
+// parseAddCommand парсит команду /add "Label" daily|once [gap:Nh|Nm] HH:MM [HH:MM ...].
+// Возвращает label, repeat, times (один или более), minGap (nil если нет gap), ошибку.
+func parseAddCommand(text string) (label, repeat string, times []string, minGap *int, err error) {
 	// Убираем "/add" в начале
 	rest := strings.TrimSpace(strings.TrimPrefix(text, "/add"))
 
 	// Извлекаем label из кавычек
 	if !strings.HasPrefix(rest, "\"") {
-		return "", "", "", fmt.Errorf("Использование: `/add \"Label\" daily|once HH:MM`")
+		return "", "", nil, nil, fmt.Errorf("Использование: `/add \"Label\" daily|once [gap:Nh|Nm] HH:MM [HH:MM ...]`")
 	}
 
 	closeQuote := strings.Index(rest[1:], "\"")
 	if closeQuote == -1 {
-		return "", "", "", fmt.Errorf("Использование: `/add \"Label\" daily|once HH:MM`")
+		return "", "", nil, nil, fmt.Errorf("Использование: `/add \"Label\" daily|once [gap:Nh|Nm] HH:MM [HH:MM ...]`")
 	}
 
 	label = rest[1 : 1+closeQuote]
@@ -159,21 +170,66 @@ func parseAddCommand(text string) (label, repeat, timeStr string, err error) {
 
 	// Разбиваем оставшуюся часть на слова
 	parts := strings.Fields(afterLabel)
-	if len(parts) != 2 {
-		return "", "", "", fmt.Errorf("Использование: `/add \"Label\" daily|once HH:MM`")
+	if len(parts) < 2 {
+		return "", "", nil, nil, fmt.Errorf("Использование: `/add \"Label\" daily|once [gap:Nh|Nm] HH:MM [HH:MM ...]`")
 	}
 
 	repeat = strings.ToLower(parts[0])
 	if repeat != "daily" && repeat != "once" {
-		return "", "", "", fmt.Errorf("Режим должен быть `daily` или `once`")
+		return "", "", nil, nil, fmt.Errorf("Режим должен быть `daily` или `once`")
 	}
 
-	timeStr = parts[1]
+	// Оставшиеся токены после repeat
+	tokens := parts[1:]
 
-	// Валидация времени
-	if _, err := time.Parse("15:04", timeStr); err != nil {
-		return "", "", "", fmt.Errorf("Неверный формат времени. Используй HH:MM (например, 09:00)")
+	// Проверяем, есть ли gap:
+	if strings.HasPrefix(strings.ToLower(tokens[0]), "gap:") {
+		gapStr := tokens[0][4:] // убираем "gap:"
+		gapVal, gapErr := parseGap(gapStr)
+		if gapErr != nil {
+			return "", "", nil, nil, gapErr
+		}
+		minGap = &gapVal
+		tokens = tokens[1:] // убираем gap-токен
 	}
 
-	return label, repeat, timeStr, nil
+	// Оставшиеся токены — это времена HH:MM
+	if len(tokens) == 0 {
+		return "", "", nil, nil, fmt.Errorf("Укажи хотя бы одно время HH:MM (например, 09:00)")
+	}
+
+	for _, t := range tokens {
+		if _, err := time.Parse("15:04", t); err != nil {
+			return "", "", nil, nil, fmt.Errorf("Неверный формат времени: %s. Используй HH:MM (например, 09:00)", t)
+		}
+	}
+
+	return label, repeat, tokens, minGap, nil
+}
+
+// parseGap парсит строку вида "3h" или "30m" в минуты.
+func parseGap(s string) (int, error) {
+	if len(s) < 2 {
+		return 0, fmt.Errorf("Неверный формат gap. Используй gap:3h или gap:30m")
+	}
+
+	unit := s[len(s)-1]
+	numStr := s[:len(s)-1]
+
+	var num int
+	for _, c := range numStr {
+		if c < '0' || c > '9' {
+			return 0, fmt.Errorf("Неверный формат gap. Используй gap:3h или gap:30m")
+		}
+		num = num*10 + int(c-'0')
+	}
+
+	switch unit {
+	case 'h':
+		return num * 60, nil
+	case 'm':
+		return num, nil
+	default:
+		return 0, fmt.Errorf("Неверный формат gap. Используй h (часы) или m (минуты)")
+	}
 }

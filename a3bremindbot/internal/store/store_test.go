@@ -724,3 +724,129 @@ func TestDeleteReminderCascadesNothing(t *testing.T) {
 	_, err = GetByID(db, r.ID)
 	assert.ErrorContains(t, err, "not found")
 }
+
+// ---------------------------------------------------------------------------
+// GetInstancesByUserAndDay tests
+// ---------------------------------------------------------------------------
+
+func TestGetInstancesByUserAndDay(t *testing.T) {
+	db := newTestDB(t)
+
+	u, _ := GetOrCreate(db, 900)
+	_ = SetTimezone(db, u.ID, "Europe/Moscow")
+	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Test", Times: []string{"09:00", "12:00"}, Repeat: "daily"})
+
+	moscow, _ := time.LoadLocation("Europe/Moscow")
+	// June 25 in Moscow
+	date := time.Date(2026, 6, 25, 0, 0, 0, 0, moscow)
+
+	inst1, _ := CreateInstance(db, ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   0,
+		ScheduledAt: time.Date(2026, 6, 25, 9, 0, 0, 0, moscow),
+		Status:      "pending",
+	})
+	inst2, _ := CreateInstance(db, ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   1,
+		ScheduledAt: time.Date(2026, 6, 25, 12, 0, 0, 0, moscow),
+		Status:      "done",
+	})
+	// Instance for a different day
+	CreateInstance(db, ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   0,
+		ScheduledAt: time.Date(2026, 6, 26, 9, 0, 0, 0, moscow),
+		Status:      "pending",
+	})
+
+	instances, err := GetInstancesByUserAndDay(db, u.ID, date, moscow)
+	require.NoError(t, err)
+	require.Len(t, instances, 2)
+	assert.Equal(t, inst1.ID, instances[0].ID)
+	assert.Equal(t, inst2.ID, instances[1].ID)
+	assert.Equal(t, "pending", instances[0].Status)
+	assert.Equal(t, "done", instances[1].Status)
+}
+
+func TestGetInstancesByUserAndDay_Empty(t *testing.T) {
+	db := newTestDB(t)
+
+	u, _ := GetOrCreate(db, 901)
+	moscow, _ := time.LoadLocation("Europe/Moscow")
+	date := time.Date(2026, 6, 25, 0, 0, 0, 0, moscow)
+
+	instances, err := GetInstancesByUserAndDay(db, u.ID, date, moscow)
+	require.NoError(t, err)
+	assert.Empty(t, instances)
+}
+
+func TestGetInstancesByUserAndDay_TimezoneBoundary(t *testing.T) {
+	// Test that for UTC+3, "today" starts at 21:00 UTC the previous day.
+	db := newTestDB(t)
+
+	u, _ := GetOrCreate(db, 902)
+	_ = SetTimezone(db, u.ID, "Europe/Moscow") // UTC+3
+	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Test", Times: []string{"09:00"}, Repeat: "daily"})
+
+	moscow, _ := time.LoadLocation("Europe/Moscow")
+	// June 25 in Moscow starts at June 24 21:00 UTC.
+	utc := time.UTC
+
+	// Instance at 2026-06-24 22:00 UTC = 2026-06-25 01:00 MSK — should be June 25 in Moscow
+	instJune25, _ := CreateInstance(db, ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   0,
+		ScheduledAt: time.Date(2026, 6, 24, 22, 0, 0, 0, utc),
+		Status:      "pending",
+	})
+	// Instance at 2026-06-24 20:00 UTC = 2026-06-24 23:00 MSK — should be June 24 in Moscow
+	CreateInstance(db, ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   0,
+		ScheduledAt: time.Date(2026, 6, 24, 20, 0, 0, 0, utc),
+		Status:      "pending",
+	})
+
+	date := time.Date(2026, 6, 25, 0, 0, 0, 0, moscow)
+	instances, err := GetInstancesByUserAndDay(db, u.ID, date, moscow)
+	require.NoError(t, err)
+	require.Len(t, instances, 1)
+	assert.Equal(t, instJune25.ID, instances[0].ID)
+}
+
+// ---------------------------------------------------------------------------
+// SetInstanceScheduledAt tests
+// ---------------------------------------------------------------------------
+
+func TestSetInstanceScheduledAt(t *testing.T) {
+	db := newTestDB(t)
+
+	u, _ := GetOrCreate(db, 910)
+	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Test", Times: []string{"09:00"}, Repeat: "daily"})
+
+	inst, _ := CreateInstance(db, ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   0,
+		ScheduledAt: time.Date(2026, 6, 25, 9, 0, 0, 0, time.UTC),
+		Status:      "pending",
+	})
+
+	newTime := time.Date(2026, 6, 25, 10, 30, 0, 0, time.UTC)
+	err := SetInstanceScheduledAt(db, inst.ID, newTime)
+	require.NoError(t, err)
+
+	got, err := GetInstanceByID(db, inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, newTime.Unix(), got.ScheduledAt.Unix())
+	// UpdatedAt should be set (not zero), and at least >= creation time.
+	assert.False(t, got.UpdatedAt.IsZero())
+	assert.GreaterOrEqual(t, got.UpdatedAt.Unix(), inst.UpdatedAt.Unix())
+}
+
+func TestSetInstanceScheduledAt_NotFound(t *testing.T) {
+	db := newTestDB(t)
+
+	err := SetInstanceScheduledAt(db, "nonexistent", time.Now())
+	assert.ErrorContains(t, err, "not found")
+}

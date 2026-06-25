@@ -371,7 +371,7 @@ func TestNextInstance_NextInChain(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create next instance.
-	err = NextInstance(db, inst)
+	_, err = NextInstance(db, inst)
 	require.NoError(t, err)
 
 	// Should have created an instance with time_index=1.
@@ -402,13 +402,179 @@ func TestNextInstance_LastIndex(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = NextInstance(db, inst)
+	_, err = NextInstance(db, inst)
 	require.NoError(t, err)
 
 	// No new instance should be created.
 	instances, err := store.GetActiveByUser(db, u.ID)
 	require.NoError(t, err)
 	assert.Empty(t, instances)
+}
+
+// ---------------------------------------------------------------------------
+// Reschedule tests
+// ---------------------------------------------------------------------------
+
+func TestReschedule_ShiftsForward(t *testing.T) {
+	// done at 09:00, min_gap=3h, original times 07:00/11:00/15:00, fromIndex=0
+	// Remaining: [11:00, 15:00]
+	// Earliest for 11:00 = 09:00 + 3h = 12:00 > 11:00 → shift to 12:00
+	// Earliest for 15:00 = 12:00 + 3h = 15:00 == 15:00 → no shift
+	// Expected: [12:00, 15:00]
+	loc := time.UTC
+	minGap := 180
+	doneAt := time.Date(2026, 6, 25, 9, 0, 0, 0, loc)
+
+	reminder := store.Reminder{
+		Times:  []string{"07:00", "11:00", "15:00"},
+		MinGap: &minGap,
+	}
+
+	adjusted, warning := Reschedule(reminder, doneAt, 0, loc)
+	assert.Empty(t, warning)
+	require.Len(t, adjusted, 2)
+
+	assert.Equal(t, "12:00", adjusted[0].In(loc).Format("15:04"), "expected 12:00, got %s", adjusted[0].Format("15:04"))
+	assert.Equal(t, "15:00", adjusted[1].In(loc).Format("15:04"), "expected 15:00, got %s", adjusted[1].Format("15:04"))
+}
+
+func TestReschedule_NoShiftNeeded(t *testing.T) {
+	// done at 06:00, min_gap=2h, original times 09:00/12:00, fromIndex=0
+	// Earliest for 09:00 = 06:00 + 2h = 08:00 < 09:00 → no shift
+	// Earliest for 12:00 = 09:00 + 2h = 11:00 < 12:00 → no shift
+	loc := time.UTC
+	minGap := 120
+	doneAt := time.Date(2026, 6, 25, 6, 0, 0, 0, loc)
+
+	reminder := store.Reminder{
+		Times:  []string{"07:00", "09:00", "12:00"},
+		MinGap: &minGap,
+	}
+
+	adjusted, warning := Reschedule(reminder, doneAt, 0, loc)
+	assert.Empty(t, warning)
+	require.Len(t, adjusted, 2)
+
+	assert.Equal(t, "09:00", adjusted[0].In(loc).Format("15:04"))
+	assert.Equal(t, "12:00", adjusted[1].In(loc).Format("15:04"))
+}
+
+func TestReschedule_NilMinGap(t *testing.T) {
+	loc := time.UTC
+
+	reminder := store.Reminder{
+		Times:  []string{"07:00", "09:00", "12:00"},
+		MinGap: nil,
+	}
+
+	doneAt := time.Date(2026, 6, 25, 6, 0, 0, 0, loc)
+	adjusted, warning := Reschedule(reminder, doneAt, 0, loc)
+	assert.Empty(t, warning)
+	require.Len(t, adjusted, 2)
+
+	// Should return the original times as time.Time for today (date is time.Now(), only time matters)
+	assert.Equal(t, "09:00", adjusted[0].In(loc).Format("15:04"))
+	assert.Equal(t, "12:00", adjusted[1].In(loc).Format("15:04"))
+}
+
+func TestReschedule_LastPastMidnight(t *testing.T) {
+	// done at 22:00, min_gap=3h, original times 07:00/11:00/23:00
+	// Remaining after index 1: [23:00]
+	// Earliest for 23:00 = 22:00 + 3h = 01:00 next day > 23:00
+	// adjusted = 01:00 next day → warning
+	loc := time.UTC
+	minGap := 180
+	doneAt := time.Date(2026, 6, 25, 22, 0, 0, 0, loc)
+
+	reminder := store.Reminder{
+		Times:  []string{"07:00", "11:00", "23:00"},
+		MinGap: &minGap,
+	}
+
+	adjusted, warning := Reschedule(reminder, doneAt, 1, loc)
+	require.Len(t, adjusted, 1)
+	assert.NotEmpty(t, warning)
+	assert.Contains(t, warning, "полночь")
+
+	// Adjusted time should be 22:00 + 3h = 01:00
+	assert.Equal(t, "01:00", adjusted[0].In(loc).Format("15:04"))
+}
+
+func TestNextInstance_WithReschedule(t *testing.T) {
+	resetGlobals()
+	db, _, _ := setup(t)
+
+	u := createTestUser(t, db, 500, "UTC")
+	minGap := 180
+	r, err := store.Create(db, store.Reminder{
+		UserID: u.ID,
+		Label:  "Reschedule test",
+		Times:  []string{"07:00", "11:00", "15:00"},
+		Repeat: "daily",
+		MinGap: &minGap,
+	})
+	require.NoError(t, err)
+
+	now := time.Now().Truncate(time.Second)
+	past := now.Add(-1 * time.Hour)
+
+	// Create a done instance at time_index=0
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   0,
+		ScheduledAt: past,
+		Status:      "done",
+		DoneAt:      &now, // done just now
+	})
+	require.NoError(t, err)
+
+	// Call NextInstance — should create time_index=1 with adjusted time
+	_, err = NextInstance(db, inst)
+	require.NoError(t, err)
+
+	// Should have created an instance with time_index=1
+	instances, err := store.GetActiveByUser(db, u.ID)
+	require.NoError(t, err)
+	require.Len(t, instances, 1)
+	assert.Equal(t, 1, instances[0].TimeIndex)
+
+	// The rescheduled time should be >= now + 3h
+	minExpected := now.Add(3 * time.Hour)
+	assert.True(t, instances[0].ScheduledAt.Unix() >= minExpected.Unix(),
+		"expected scheduled_at >= %s, got %s", minExpected.Format("15:04"), instances[0].ScheduledAt.Format("15:04"))
+}
+
+func TestNextInstance_RescheduleWarning(t *testing.T) {
+	resetGlobals()
+	db, _, _ := setup(t)
+
+	u := createTestUser(t, db, 501, "UTC")
+	minGap := 180
+	r, err := store.Create(db, store.Reminder{
+		UserID: u.ID,
+		Label:  "Warning test",
+		Times:  []string{"07:00", "23:00"},
+		Repeat: "daily",
+		MinGap: &minGap,
+	})
+	require.NoError(t, err)
+
+	// done at 22:00, remaining 23:00 → shifted to 01:00 next day
+	now := time.Date(2026, 6, 25, 22, 0, 0, 0, time.UTC)
+
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   0,
+		ScheduledAt: now.Add(-1 * time.Hour),
+		Status:      "done",
+		DoneAt:      &now,
+	})
+	require.NoError(t, err)
+
+	warning, err := NextInstance(db, inst)
+	require.NoError(t, err)
+	assert.NotEmpty(t, warning)
+	assert.Contains(t, warning, "полночь")
 }
 
 // ---------------------------------------------------------------------------
@@ -444,7 +610,7 @@ func TestIntegration_ProcessPending_NextInstance(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create next instance.
-	err = NextInstance(db, inst)
+	_, err = NextInstance(db, inst)
 	require.NoError(t, err)
 
 	// Next instance should be at time_index=1.

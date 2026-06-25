@@ -345,30 +345,30 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
 
 ### 4.1 store — новые методы
 
-- [ ] `GetInstancesByUserAndDay(db *sql.DB, userID string, date time.Time, loc *time.Location) ([]ReminderInstance, error)`:
+- [x] `GetInstancesByUserAndDay(db *sql.DB, userID string, date time.Time, loc *time.Location) ([]ReminderInstance, error)`:
   - Принимает `date` и `loc` (timezone пользователя)
   - Вычисляет начало и конец дня в timezone пользователя, конвертирует в UTC для SQL-запроса
   - `scheduled_at BETWEEN startOfDayUTC AND endOfDayUTC`
   - Использовать timezone пользователя, не UTC-день — иначе для UTC+3 "сегодня" начинается в 21:00 UTC предыдущего дня
-- [ ] `SetInstanceScheduledAt(db *sql.DB, id string, t time.Time) error` — обновляет `scheduled_at` и `updated_at` у Instance. Реализуется в Фазе 4, используется также в Фазе 5 (`/snooze`).
+- [x] `SetInstanceScheduledAt(db *sql.DB, id string, t time.Time) error` — обновляет `scheduled_at` и `updated_at` у Instance. Реализуется в Фазе 4, используется также в Фазе 5 (`/snooze`).
 
 ### 4.2 Расширить `parseAddCommand` для серии с gap
 
-- [ ] Новая сигнатура: `parseAddCommand(text string) (label, repeat string, times []string, minGap *int, err error)`
+- [x] Новая сигнатура: `parseAddCommand(text string) (label, repeat string, times []string, minGap *int, err error)`
   - Заменяет старую `(label, repeat, timeStr string, err error)`
   - `times` — один или несколько `HH:MM`, `minGap` — указатель на int (минуты) или nil
 
-- [ ] Новый формат команды:
+- [x] Новый формат команды:
   ```
   /add "Label" daily gap:3h 07:00 11:00 15:00 18:00 21:00   — серия с gap
   /add "Label" daily 07:00 11:00 15:00                        — серия без gap
   /add "Label" once 09:00                                     — одиночное (как сейчас)
   ```
-- [ ] Парсинг `gap:3h` / `gap:30m`: извлечь число + единицу (h → ×60, m → ×1) → `*int` минуты. `gap:` опциональный, если отсутствует → `minGap = nil`
-- [ ] Все токены `HH:MM` валидируются через `time.Parse("15:04", v)`, ошибка если ни одного
-- [ ] В `handleAdd`: создать `Reminder` с `Times = times`, `MinGap = minGap`; первый Instance для `Times[0]` — как сейчас
+- [x] Парсинг `gap:3h` / `gap:30m`: извлечь число + единицу (h → ×60, m → ×1) → `*int` минуты. `gap:` опциональный, если отсутствует → `minGap = nil`
+- [x] Все токены `HH:MM` валидируются через `time.Parse("15:04", v)`, ошибка если ни одного
+- [x] В `handleAdd`: создать `Reminder` с `Times = times`, `MinGap = minGap`; первый Instance для `Times[0]` — как сейчас
 
-- [ ] Тесты:
+- [x] Тесты:
   - `TestParseAddCommand_Series` — `/add "Капли" daily 07:00 11:00 15:00` → `times=["07:00","11:00","15:00"]`, minGap=nil
   - `TestParseAddCommand_WithGap` — `/add "Капли" daily gap:3h 07:00 11:00 15:00` → minGap=180
   - `TestParseAddCommand_GapMinutes` — `gap:30m` → minGap=30
@@ -380,7 +380,7 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
 
 ### 4.3 Reschedule в domain
 
-- [ ] Новая функция `Reschedule(reminder store.Reminder, doneAt time.Time, fromIndex int, loc *time.Location) (adjustedTimes []time.Time, warning string)`:
+- [x] Новая функция `Reschedule(reminder store.Reminder, doneAt time.Time, fromIndex int, loc *time.Location) (adjustedTimes []time.Time, warning string)`:
   - Если `reminder.MinGap == nil` → вернуть исходные времена из `reminder.Times[fromIndex+1:]` без изменений (конвертировать в time.Time для текущего дня)
   - Начинать с `doneAt` как точки отсчёта
   - Для каждого `reminder.Times[i]` где `i > fromIndex`:
@@ -389,7 +389,7 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
     - `adjustedTimes[i] = max(originalTime, earliestNext)`
   - Если последнее `adjustedTime` выходит за 23:59 в `loc` → `warning` непустой
 
-- [ ] Модифицировать `NextInstance`:
+- [x] Модифицировать `NextInstance`:
   - Новая сигнатура: `func NextInstance(db *sql.DB, inst store.ReminderInstance) (warning string, err error)`
   - После создания нового Instance:
     - Загрузить User для получения timezone (`store.GetUserByID`)
@@ -398,9 +398,9 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
     - Если Reschedule вернул warning → вернуть его из NextInstance
   - Обновить все существующие вызовы NextInstance в bot и тестах под новую сигнатуру (warning пока можно игнорировать через `_`)
 
-- [ ] **Новый store-метод** `SetInstanceScheduledAt` — уже описан в 4.1
+- [x] **Новый store-метод** `SetInstanceScheduledAt` — уже описан в 4.1
 
-- [ ] Тесты:
+- [x] Тесты:
   - `TestReschedule_ShiftsForward` — done в 09:00, min_gap=3h, исходные 07:00/11:00/15:00 → [12:00, 15:00] (11:00 сдвинуто до 12:00, 12+3=15 совпадает)
   - `TestReschedule_NoShiftNeeded` — done в 06:00, min_gap=2h, исходные 09:00/12:00 → [09:00, 12:00] (не сдвигаем: 6+2=8 < 9)
   - `TestReschedule_NilMinGap` — без MinGap → возвращает исходные времена
@@ -411,18 +411,20 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
 
 ### 4.4 Предупреждение и уведомление в bot
 
-- [ ] Обновить вызов `domain.NextInstance` в `bot/done.go`:
+- [x] Обновить вызов `domain.NextInstance` в `bot/done.go`:
   - Обрабатывать `warning` — если непустой, отправить пользователю: `"⚠️ Последний приём выходит за полночь — пропустить?"`
 
-- [ ] Уведомление о рескедуле:
+- [x] Уведомление о рескедуле:
   - После NextInstance проверить: если `inst.DoneAt != nil` и у Reminder есть `MinGap` → рескедул был применён
   - Перечитать все pending Instance цепочки (через `GetInstancesByUserAndDay`) и сформировать список актуальных времён
   - Отправить: `"📅 Новое расписание: 12:00 · 15:00 · 18:00 · 21:00"` — только если хотя бы одно время сдвинулось относительно исходного `times[]`
 
-- [ ] Тесты:
+- [x] Тесты:
   - `TestHandleDone_RescheduleNotification` — done с MinGap → бот отправил `📅` сообщение
   - `TestHandleDone_RescheduleWarning` — warning при выходе за полночь → бот отправил `⚠️`
   - `TestHandleDone_NoRescheduleNotification` — без MinGap → `📅` не отправляется
+
+> Реализованы GetInstancesByUserAndDay, SetInstanceScheduledAt в store; parseAddCommand с сериями и gap; Reschedule в domain; модифицирован NextInstance (новая сигнатура с warning); обработка warning и уведомление о рескедуле в bot. Все тесты проходят (store 47, domain 18, bot 30).
 
 ---
 
