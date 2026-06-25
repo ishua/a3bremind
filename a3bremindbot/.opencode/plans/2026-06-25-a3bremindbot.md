@@ -191,12 +191,12 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
 
 ## Фаза 3: bot — минимальный живой бот
 
-> Telegram-интеграция. `/start`, `/settings timezone`, `/add` (одно время), `done`/`ok`/`+` с reply и fallback.
+> Telegram-интеграция. `/start`, `/settings timezone`, `/add` (одно время), `done`/`ok`/`+` с reply и fallback. Все 16 тестов проходят.
 
-- [ ] 3.1 Добавить зависимость go-telegram-bot-api
+- [x] 3.1 Добавить зависимость go-telegram-bot-api
   - `go get github.com/go-telegram-bot-api/telegram-bot-api/v5`
 
-- [ ] 3.2 Определить BotAPI interface
+- [x] 3.2 Определить BotAPI interface
   - Файл: `internal/bot/handler.go`
   - Интерфейс содержит ровно один метод — больше не добавлять:
     ```go
@@ -206,7 +206,7 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
     ```
   - Реальный `*tgbotapi.BotAPI` удовлетворяет интерфейсу нативно, мок — в тестах
 
-- [ ] 3.3 `bot/notifier.go` — реализация domain.Notifier
+- [x] 3.3 `bot/notifier.go` — реализация domain.Notifier
   - ```go
     type Notifier struct {
         bot BotAPI
@@ -215,7 +215,7 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
   - `SendMessage(telegramID int64, text string) (messageID int, sentAt time.Time, err error)`
   - Создаёт `tgbotapi.NewMessage(telegramID, text)`, вызывает `bot.Send()`, возвращает `msg.MessageID` и `time.Now()`
 
-- [ ] 3.4 `bot/handler.go` — маршрутизация
+- [x] 3.4 `bot/handler.go` — маршрутизация
   - Структура `Handler` с полями: `db`, `bot` (BotAPI интерфейс), `scheduler`
   - `HandleUpdate(update)`:
     - `update.Message == nil` → return
@@ -223,7 +223,7 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
     - Текст `"done"`, `"ok"`, `"+"` (strings.ToLower, strings.TrimSpace) → `handleDone`
     - Остальное → игнор
 
-- [ ] 3.5 `bot/commands.go` — обработка команд
+- [x] 3.5 `bot/commands.go` — обработка команд
 
   **`/start`:**
   - `store.GetOrCreate` пользователя
@@ -246,7 +246,7 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
   - **Если время уже прошло сегодня**: Instance всё равно создаётся, scheduler пришлёт уведомление немедленно при следующем тике. Это осознанное поведение — пользователь получит напоминание сразу. В Фазе 5 можно добавить предупреждение.
   - Ответ: "✅ Напоминание «Label» создано. Первое — сегодня в HH:MM."
 
-- [ ] 3.6 `bot/done.go` — обработка подтверждений
+- [x] 3.6 `bot/done.go` — обработка подтверждений
 
   **`handleDone`:**
   1. Получить пользователя через `store.GetOrCreate`
@@ -265,7 +265,7 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
 
   **`done_at`:** всегда `time.Now()` в момент вызова `SetStatus("done")`. Ручное указание времени (`done 09:15`) — Фаза 5.
 
-- [ ] 3.7 `cmd/main.go` — точка входа
+- [x] 3.7 `cmd/main.go` — точка входа
   - Токен из env: `os.Getenv("TELEGRAM_BOT_TOKEN")` — panic если пустой
   - `store.InitDB("sqlite", "bot.db")`
   - Создание `*tgbotapi.BotAPI`
@@ -273,7 +273,7 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
   - `scheduler.Start()` / `defer scheduler.Stop()`
   - Long-polling loop: `botAPI.GetUpdatesChan(cfg)` → `handler.HandleUpdate(update)`
 
-- [ ] 3.8 Тесты (`internal/bot/bot_test.go`)
+- [x] 3.8 Тесты (`internal/bot/bot_test.go`)
 
   Mock BotAPI:
   ```go

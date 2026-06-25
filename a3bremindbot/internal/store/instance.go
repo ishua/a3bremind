@@ -87,7 +87,8 @@ func GetActiveByUser(db *sql.DB, userID string) ([]ReminderInstance, error) {
 	const query = `SELECT ri.id, ri.reminder_id, ri.time_index, ri.scheduled_at, ri.done_at, ri.status, ri.message_ids, ri.created_at, ri.updated_at
 		FROM reminder_instances ri
 		JOIN reminders r ON r.id = ri.reminder_id
-		WHERE r.user_id = ? AND ri.status = 'pending'`
+		WHERE r.user_id = ? AND ri.status = 'pending'
+		ORDER BY ri.scheduled_at DESC`
 
 	rows, err := db.Query(query, userID)
 	if err != nil {
