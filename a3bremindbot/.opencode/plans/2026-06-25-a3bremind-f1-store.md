@@ -12,7 +12,7 @@
 
 ## Фаза 1: store — слой данных
 
-> 1.1-1.6 реализованы: go module, InitDB с automigration, User/Reminder/ReminderInstance CRUD, юнит-тесты. 1.6 завершена: 38 тестов, все проходят. Покрыты все CRUD-операции, edge cases (not found, дубликаты, пустые массивы, граничные значения time_index).
+> 1.1-1.6 реализованы, 1.7 запланирована: атомарный AddMessageID через json_set.
 
 - [x] 1.1 Инициализация Go module и структуры директорий
   - `go mod init github.com/a3bremind/a3bremindbot`
@@ -43,11 +43,16 @@
   - `GetLastByReminder(reminderID string, timeIndex int) (ReminderInstance, error)` — для рескедулера
   - `SetStatus(id string, status string) error` — обновляет `updated_at`
   - `SetDoneAt(id string, t time.Time) error` — обновляет `updated_at`
-  - `AddMessageID(id string, messageID int) error` — читает JSON, аппендит, пишет обратно; обновляет `updated_at`
+  - `AddMessageID(id string, messageID int) error` — аппендит message_id через json_set, атомарно; обновляет `updated_at`
 - [x] 1.6 Юнит-тесты с SQLite in-memory
   - табличные тесты на каждую CRUD-операцию
   - test helper: `newTestDB(t) *sql.DB` — открывает in-memory SQLite, запускает миграцию
   - покрыть edge cases: дубликаты, отсутствующие записи, граничные значения
+
+- [ ] 1.7 Сделать AddMessageID атомарным через SQLite json_set
+  - заменить read-modify-write (SELECT + unmarshal + append + marshal + UPDATE) на один UPDATE с json_set(message_ids, '$[#]', ?)
+  - убрать импорт encoding/json из instance.go (если больше не нужен)
+  - добавить тест TestAddMessageID_Concurrent с запуском parallel горутин на одной записи
 
 ## Решения и договорённости
 
@@ -63,7 +68,7 @@
 - **Update Reminder**: нужен сразу — для пометки `once` как завершённого, для статистики и контроля повторов
 - **updated_at**: на Reminder и ReminderInstance — обновляется при любом изменении, помогает при отладке и истории
 - **GetOrCreate**: семантика upsert через `INSERT OR IGNORE` + `SELECT`, возвращает существующего пользователя без ошибки
-- **AddMessageID**: не атомарна — читаем JSON, аппендим, пишем обратно. Конкурентный доступ не предполагается (один ticker, один поток записи)
+- **AddMessageID**: атомарна через SQLite json_set(message_ids, '$[#]', ?). Конкурентный доступ безопасен.
 - **GetByID для Instance**: добавлен — domain-слою нужно закрывать Instance по id
 
 ## Открытые вопросы
@@ -153,7 +158,7 @@ type ReminderInstance struct {
 - GetLastByReminder(reminderID string, timeIndex int) (ReminderInstance, error)
 - SetStatus(id string, status string) error
 - SetDoneAt(id string, t time.Time) error
-- AddMessageID(id string, messageID int) error  — read JSON → append → write, не атомарно, конкурентность не предполагается
+- AddMessageID(id string, messageID int) error  — атомарный аппенд через json_set
 
 ## Схема БД (automigration в InitDB через CREATE TABLE IF NOT EXISTS)
 

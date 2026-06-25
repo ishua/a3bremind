@@ -89,7 +89,6 @@ func scanUser(row scannable) (User, error) {
 		return User{}, fmt.Errorf("scan user: %w", err)
 	}
 
-	u.Paused = u.Paused // bool scanned from INTEGER 0/1
 	u.CreatedAt = time.Unix(createdAt, 0)
 
 	if lastResetAt.Valid {
