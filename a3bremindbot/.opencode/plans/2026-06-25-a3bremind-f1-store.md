@@ -12,27 +12,29 @@
 
 ## Фаза 1: store — слой данных
 
-- [ ] 1.1 Инициализация Go module и структуры директорий
+> 1.1-1.6 реализованы: go module, InitDB с automigration, User/Reminder/ReminderInstance CRUD, юнит-тесты. 1.6 завершена: 38 тестов, все проходят. Покрыты все CRUD-операции, edge cases (not found, дубликаты, пустые массивы, граничные значения time_index).
+
+- [x] 1.1 Инициализация Go module и структуры директорий
   - `go mod init github.com/a3bremind/a3bremindbot`
   - `go get modernc.org/sqlite`, `google/uuid`, `stretchr/testify`
   - создать `/internal/store/` с файлами `db.go`, `user.go`, `reminder.go`, `instance.go`
-- [ ] 1.2 Схема БД (`db.go`)
+- [x] 1.2 Схема БД (`db.go`)
   - функция `InitDB(driverName, dataSourceName string) (*sql.DB, error)`
   - automigration: три таблицы (users, reminders, reminder_instances) через CREATE TABLE IF NOT EXISTS
   - корректные типы SQLite для каждого поля согласно spec
-- [ ] 1.3 User CRUD (`user.go`)
+- [x] 1.3 User CRUD (`user.go`)
   - `GetOrCreate(telegramID int64) (User, error)` — upsert через INSERT OR IGNORE + SELECT; возвращает существующего пользователя без ошибки
   - `GetByTelegramID(telegramID int64) (User, error)`
   - `SetTimezone(userID string, tz string) error`
   - `SetPaused(userID string, paused bool) error`
   - `SetLastResetAt(userID string, t time.Time) error`
-- [ ] 1.4 Reminder CRUD (`reminder.go`)
+- [x] 1.4 Reminder CRUD (`reminder.go`)
   - `Create(r Reminder) (Reminder, error)`
   - `GetAll(userID string) ([]Reminder, error)`
   - `GetByID(id string) (Reminder, error)`
   - `Update(r Reminder) error` — обновляет `updated_at` автоматически
   - `Delete(id string) error`
-- [ ] 1.5 ReminderInstance CRUD (`instance.go`)
+- [x] 1.5 ReminderInstance CRUD (`instance.go`)
   - `Create(i ReminderInstance) (ReminderInstance, error)`
   - `GetByID(id string) (ReminderInstance, error)`
   - `GetPending(now time.Time) ([]ReminderInstance, error)` — `scheduled_at <= now AND status = 'pending'`
@@ -42,7 +44,7 @@
   - `SetStatus(id string, status string) error` — обновляет `updated_at`
   - `SetDoneAt(id string, t time.Time) error` — обновляет `updated_at`
   - `AddMessageID(id string, messageID int) error` — читает JSON, аппендит, пишет обратно; обновляет `updated_at`
-- [ ] 1.6 Юнит-тесты с SQLite in-memory
+- [x] 1.6 Юнит-тесты с SQLite in-memory
   - табличные тесты на каждую CRUD-операцию
   - test helper: `newTestDB(t) *sql.DB` — открывает in-memory SQLite, запускает миграцию
   - покрыть edge cases: дубликаты, отсутствующие записи, граничные значения
