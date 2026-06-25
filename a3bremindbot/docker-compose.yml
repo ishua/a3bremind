@@ -1,0 +1,6 @@
+services:
+  bot:
+    image: a3bremindbot:latest
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+    restart: unless-stopped

@@ -22,6 +22,9 @@
 # --- Build output ---
 /tmp/
 
+# --- opencode ---
+.opencode/
+
 # --- Runtime data ---
 bot.db
 bot.db-wal
