@@ -1,23 +1,26 @@
-# a3bRemindBot · Фаза 1–2: store + domain
+# a3bRemindBot · Фаза 1–3: store + domain + bot
 
-> Фаза 1: SQLite-слой, CRUD, MessageIDEntry. Фаза 2: scheduler, DailyReset, NextInstance, mock-уведомления.
+> Фаза 1: SQLite-слой, CRUD, MessageIDEntry. Фаза 2: scheduler, DailyReset, NextInstance, mock-уведомления. Фаза 3: Telegram-интеграция — /start, /add, done.
 
 ## Контекст
 
 Проект — телеграм-бот для напоминаний. Реализация снизу вверх. Фаза 1 (store) реализована: SQLite-схема, CRUD для User, Reminder, ReminderInstance, юнит-тесты.  
 Фаза 1.8 добавляет в message_ids времена отправки (структура MessageIDEntry), чтобы domain мог считать попытки и интервалы без отдельных полей attempts/last_attempt_at.  
-Фаза 2 (domain) — бизнес-логика: scheduler с time.Ticker, обработка pending instances, создание цепочек, daily reset.
+Фаза 2 (domain) — бизнес-логика: scheduler с time.Ticker, обработка pending instances, создание цепочек, daily reset.  
+Фаза 3 (bot) — Telegram-интеграция: live-бот с /start, /add, done.
 
 Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQL через `database/sql` + `modernc.org/sqlite`. Тесты — `testing` + `stretchr/testify`.
 
 ## Цель
 
-Получить полностью протестированный domain-слой, который:
+Получить полностью протестированный store и domain-слой, и минимальный живой Telegram-бот, который:
 - Запускает scheduler (time.Ticker, 1 раз в секунду)
 - Обрабатывает pending instances: первое уведомление → повторы → missed
-- Делает DailyReset в 03:00 по timezone пользователя: создаёт Instance для каждого daily Reminder
+- Делает DailyReset в 03:00 по timezone пользователя
 - Реализует NextInstance: после done/skipped → следующий time_index в цепочке
-- Использует интерфейс Notifier для отправки сообщений (в тестах — mock)
+- Принимает `/start` с запросом timezone
+- Принимает `/add` для создания напоминаний (одно время, без серии и рескедулера)
+- Обрабатывает `done`/`ok`/`+` с reply и fallback на последний активный Instance
 
 ---
 
@@ -32,7 +35,7 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
 - [x] 1.5 ReminderInstance CRUD (instance.go)
 - [x] 1.6 Юнит-тесты с SQLite in-memory
 - [x] 1.7 Атомарный AddMessageID через json_set
-- [ ] 1.8 Изменить MessageIDs с []int на []MessageIDEntry{MessageID, SentAt}
+- [x] 1.8 Изменить MessageIDs с []int на []MessageIDEntry{MessageID, SentAt}
   - Определить в `instance.go` структуру `MessageIDEntry`:
     ```go
     type MessageIDEntry struct {
@@ -88,8 +91,8 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
         stopCh   chan struct{}
     }
     func New(db *sql.DB, notifier Notifier) *Scheduler
-    func (s *Scheduler) Start()          // goroutine: time.Ticker(SchedulerInterval)
-    func (s *Scheduler) Stop()           // close(stopCh)
+    func (s *Scheduler) Start()             // goroutine: time.Ticker(SchedulerInterval)
+    func (s *Scheduler) Stop()              // close(stopCh)
     func (s *Scheduler) tick(now time.Time) // приватный, вызывается каждый тик
     ```
   - `tick` остаётся приватным. Для тестов экспортируется через `export_test.go`:
@@ -111,14 +114,14 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
   - Файл: `/internal/domain/pending.go`
   - Алгоритм для каждого pending instance:
     1. Загрузить `Reminder` по `instance.ReminderID` через `store.GetByID`
-    2. Загрузить `User` через `store.GetUserByID(reminder.UserID)` (новый метод, см. 2.7)
+    2. Загрузить `User` через `store.GetUserByID(reminder.UserID)`
     3. Определить действие по длине `instance.MessageIDs`:
        - `len == 0` → первое уведомление: `⏰ HH:MM · Label`
        - `0 < len < RepeatCount` → повтор, но только если `now - lastEntry.SentAt >= RepeatInterval`: `🔔 Напоминаю: Label (попытка N/RepeatCount)`
        - `len < RepeatCount` но интервал ещё не прошёл → пропустить тик
     4. Отправить через `notifier.SendMessage(user.TelegramID, text)` → получить `(messageID, sentAt)`
     5. Вызвать `store.AddMessageID(db, instance.ID, messageID, sentAt)`
-    6. Если `len(instance.MessageIDs) + 1 >= RepeatCount` → SetStatus("missed")
+    6. Если `len(instance.MessageIDs) + 1 >= RepeatCount` → `store.SetStatus(db, instance.ID, "missed")`
 
   **Важно:** missed выставляется после отправки последнего сообщения. Пользователь всегда видит финальное уведомление перед тем как instance уходит в missed. Отдельного сообщения `❌` нет — статус missed выставляется тихо после последней попытки.
 
@@ -131,7 +134,7 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
     - Создать `ReminderInstance` через `store.CreateInstance`
     - Обновить `user.LastResetAt = now` через `store.SetLastResetAt`
   - `checkDailyReset(now time.Time) error`:
-    - Получить всех пользователей через `store.GetAllUsers()` (новый метод, см. 2.7)
+    - Получить всех пользователей через `store.GetAllUsers()`
     - Для каждого пользователя:
       - Загрузить timezone, получить `userLoc`
       - `localNow := now.In(userLoc)`
@@ -151,9 +154,7 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
     - `ScheduledAt = сегодняшняя дата + reminder.Times[nextIndex]` (без рескедулера — Фаза 4)
     - Создать новый Instance через `store.CreateInstance`
   - Если `instance.TimeIndex` последний в серии → цепочка завершена, ничего не создаём
-    - Это одинаково для `daily` и `once`: следующий Instance для `daily` создаст DailyReset завтра в 03:00; для `once` больше ничего не происходит
-
--
+    - Одинаково для `daily` и `once`: для `daily` новую цепочку создаст DailyReset завтра в 03:00; для `once` больше ничего не происходит
 
 - [x] 2.8 Юнит-тесты domain
   - Файл: `/internal/domain/domain_test.go`
@@ -188,6 +189,125 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
 
 ---
 
+## Фаза 3: bot — минимальный живой бот
+
+> Telegram-интеграция. `/start`, `/settings timezone`, `/add` (одно время), `done`/`ok`/`+` с reply и fallback.
+
+- [ ] 3.1 Добавить зависимость go-telegram-bot-api
+  - `go get github.com/go-telegram-bot-api/telegram-bot-api/v5`
+
+- [ ] 3.2 Определить BotAPI interface
+  - Файл: `internal/bot/handler.go`
+  - Интерфейс содержит ровно один метод — больше не добавлять:
+    ```go
+    type BotAPI interface {
+        Send(c tgbotapi.Chattable) (tgbotapi.Message, error)
+    }
+    ```
+  - Реальный `*tgbotapi.BotAPI` удовлетворяет интерфейсу нативно, мок — в тестах
+
+- [ ] 3.3 `bot/notifier.go` — реализация domain.Notifier
+  - ```go
+    type Notifier struct {
+        bot BotAPI
+    }
+    ```
+  - `SendMessage(telegramID int64, text string) (messageID int, sentAt time.Time, err error)`
+  - Создаёт `tgbotapi.NewMessage(telegramID, text)`, вызывает `bot.Send()`, возвращает `msg.MessageID` и `time.Now()`
+
+- [ ] 3.4 `bot/handler.go` — маршрутизация
+  - Структура `Handler` с полями: `db`, `bot` (BotAPI интерфейс), `scheduler`
+  - `HandleUpdate(update)`:
+    - `update.Message == nil` → return
+    - `IsCommand()` → роутинг по команде: `/start`, `/settings`, `/add`, неизвестная → "Неизвестная команда"
+    - Текст `"done"`, `"ok"`, `"+"` (strings.ToLower, strings.TrimSpace) → `handleDone`
+    - Остальное → игнор
+
+- [ ] 3.5 `bot/commands.go` — обработка команд
+
+  **`/start`:**
+  - `store.GetOrCreate` пользователя
+  - Если timezone пустая → приветствие + "Укажи часовой пояс: `/settings timezone Europe/Berlin`"
+  - Если timezone задана → "С возвращением!"
+
+  **`/settings timezone <value>`:**
+  - Парсинг: после `/settings` → субкоманда `timezone` + значение
+  - Если субкоманда не `timezone` или нет значения → "Использование: `/settings timezone Europe/Berlin`"
+  - Валидация через `time.LoadLocation(value)` — ошибка если невалидный
+  - `store.SetTimezone` → "✅ Часовой пояс установлен: Europe/Berlin"
+
+  **`/add "Label" daily|once HH:MM`** (ручной парсинг, без regexp):
+  - Функция `parseAddCommand(text string) → (label, repeat, time string, err error)`:
+    - Извлекает label из кавычек (первая пара `"..."`)
+    - repeat: `daily` или `once` — ошибка если другое
+    - ровно одно время `HH:MM` — валидация через `time.Parse("15:04", value)`
+  - Проверка: пользователь существует и timezone задана — иначе "Сначала укажи часовой пояс"
+  - `store.Create(reminder)` → `store.CreateInstance` с `ScheduledAt = today + HH:MM` в timezone пользователя
+  - **Если время уже прошло сегодня**: Instance всё равно создаётся, scheduler пришлёт уведомление немедленно при следующем тике. Это осознанное поведение — пользователь получит напоминание сразу. В Фазе 5 можно добавить предупреждение.
+  - Ответ: "✅ Напоминание «Label» создано. Первое — сегодня в HH:MM."
+
+- [ ] 3.6 `bot/done.go` — обработка подтверждений
+
+  **`handleDone`:**
+  1. Получить пользователя через `store.GetOrCreate`
+  2. **Если есть reply:**
+     - `update.Message.ReplyToMessage.MessageID` → `store.GetInstanceByMessageID`
+     - Не найдено → "Не удалось найти напоминание"
+     - Статус не `pending` → "Это напоминание уже выполнено"
+     - `store.SetStatus(db, instance.ID, "done")` — проставляет `done_at = time.Now()` автоматически
+     - `domain.NextInstance(db, instance)`
+     - Ответ: "✅ Label — записано в HH:MM" где HH:MM берётся из `done_at` обновлённого instance (перечитать из store после SetStatus)
+  3. **Если нет reply:**
+     - `store.GetActiveByUser(user.ID)` → берём последний по `scheduled_at DESC`
+     - Пусто → "Нет активных напоминаний"
+     - `store.SetStatus(db, instance.ID, "done")` + `domain.NextInstance`
+     - Ответ аналогичный
+
+  **`done_at`:** всегда `time.Now()` в момент вызова `SetStatus("done")`. Ручное указание времени (`done 09:15`) — Фаза 5.
+
+- [ ] 3.7 `cmd/main.go` — точка входа
+  - Токен из env: `os.Getenv("TELEGRAM_BOT_TOKEN")` — panic если пустой
+  - `store.InitDB("sqlite", "bot.db")`
+  - Создание `*tgbotapi.BotAPI`
+  - Wire-up: `bot.NewNotifier(botAPI)` → `domain.New(db, notifier)` → `bot.NewHandler(db, botAPI, scheduler)`
+  - `scheduler.Start()` / `defer scheduler.Stop()`
+  - Long-polling loop: `botAPI.GetUpdatesChan(cfg)` → `handler.HandleUpdate(update)`
+
+- [ ] 3.8 Тесты (`internal/bot/bot_test.go`)
+
+  Mock BotAPI:
+  ```go
+  type mockBot struct {
+      sent  []tgbotapi.MessageConfig
+      msgID int
+  }
+  func (m *mockBot) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
+      cfg := c.(tgbotapi.MessageConfig)
+      m.msgID++
+      m.sent = append(m.sent, cfg)
+      return tgbotapi.Message{MessageID: m.msgID}, nil
+  }
+  ```
+
+  - **TestHandleStart_NewUser** — `/start` → приветствие + запрос timezone
+  - **TestHandleStart_ExistingUser** — `/start` повторно → "с возвращением"
+  - **TestHandleSettingsTimezone** — `/settings timezone Europe/Berlin` → подтверждение
+  - **TestHandleSettingsTimezone_Invalid** — `/settings timezone Invalid/TZ` → ошибка
+  - **TestHandleSettings_NoSubcommand** — `/settings` → справка
+  - **TestHandleAdd_Daily** — `/add "Test" daily 09:00` → reminder + instance созданы, repeat=daily
+  - **TestHandleAdd_Once** — `/add "Pushups" once 09:00` → repeat=once
+  - **TestHandleAdd_NoTimezone** — `/add` до установки timezone → ошибка
+  - **TestHandleAdd_InvalidTime** — `/add "Test" daily 25:00` → ошибка парсинга
+  - **TestHandleDone_Reply** — reply на сообщение бота → статус `done`, `done_at` проставлен
+  - **TestHandleDone_NextInstanceCreated** — reply на instance с `time_index=0` в серии → после done создан instance с `time_index=1`
+  - **TestHandleDone_NoReplyFallback** — `done` без reply → fallback к последнему активному
+  - **TestHandleDone_NoActive** — `done` без активных → "нет активных напоминаний"
+  - **TestHandleDone_AlreadyDone** — reply на уже `done` instance → "уже выполнено"
+  - **TestHandleDone_OkSynonym** — `"ok"` → то же что done
+  - **TestHandleDone_PlusSynonym** — `"+"` → то же что done
+
+---
+
 ## Решения и договорённости
 
 - **Go module**: `github.com/a3bremind/a3bremindbot`, версия Go 1.25
@@ -197,6 +317,7 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
 - **Типы моделей**: domain использует store-типы напрямую (User, Reminder, ReminderInstance) — без дублирования структур
 - **MessageIDEntry**: структура в store, хранит messageID + unix-время отправки как JSON-объект в массиве message_ids
 - **AddMessageID**: принимает `messageID int, sentAt time.Time`, конвертирует в `SentAt.Unix()`, аппендит через `json_set`
+- **SetStatus("done")**: автоматически проставляет `done_at = time.Now()` — отдельный вызов `SetDoneAt` не нужен
 - **missed**: выставляется тихо после отправки последнего сообщения — отдельного `❌`-сообщения нет
 - **tick**: приватный метод, экспортируется для тестов через `export_test.go`
 - **SchedulerInterval**: 1 секунда (через time.Ticker)
@@ -207,8 +328,17 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
 - **NextInstance**: срабатывает только при done/skipped, не при missed
 - **NextInstance для последнего index**: ничего не создаёт — одинаково для daily и once; для daily новую цепочку создаст DailyReset
 - **Rescheduler**: отложен в Фазу 4
-- **Notifier**: симплексный (SendMessage → (messageID, sentAt)). Domain не знает о Telegram. Реальная реализация в Фазе 3.
-- **once-reminder завершение**: в Фазе 2 не помечается явно — DailyReset и так пропускает once. Отложено.
+- **Notifier**: симплексный (SendMessage → (messageID, sentAt)). Domain не знает о Telegram. Реализован в bot/notifier.go.
+- **BotAPI interface**: ровно один метод `Send` — больше не добавлять
+- **`/add` с immediate instance**: первый Instance создаётся сразу. Если время прошло — scheduler пришлёт уведомление при следующем тике. Предупреждение — Фаза 5.
+- **`done_at`**: всегда `time.Now()` в момент `SetStatus("done")`. Ручное указание времени (`done 09:15`) — Фаза 5.
+- **`done` без reply**: берётся последний `pending` instance пользователя по `scheduled_at DESC`
+- **Неизвестные команды**: ответ "Неизвестная команда"
+- **Неизвестный текст**: игнорируется (кроме done/ok/+)
+- **done при paused**: работает — paused только для автоматических уведомлений
+- **Telegram токен**: через `TELEGRAM_BOT_TOKEN` env var, panic если пустой
+- **Путь к БД**: `bot.db` в CWD
+- **once-reminder завершение**: DailyReset пропускает once — явной пометки нет. Отложено на Фазу 5.
 
 ## Открытые вопросы
 
