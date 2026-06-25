@@ -308,38 +308,343 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
 
 ---
 
+# a3bRemindBot · Фаза 4: серии и рескедулер · Фаза 5: полный бот
+
+> Фаза 4: `/add` с несколькими временами и `gap`, Reschedule в domain, предупреждение о выходе за полночь и уведомление о рескедуле. Фаза 5: `/schedule`, `/list`, `/skip`, `/snooze`, `/pause`, `/delete`, `done HH:MM`, оставшиеся corner cases.
+
+Без задачи — продолжение плана разработки.
+
+## Контекст
+
+Фазы 1–3 полностью реализованы и протестированы:
+- **store**: SQLite-схема, CRUD для User/Reminder/ReminderInstance, MessageIDEntry, ~45 тестов
+- **domain**: Scheduler (ticker 1/сек), ProcessPending (первые уведомления, повторы, missed), DailyReset, NextInstance (цепочка без рескедула), ~12 тестов
+- **bot**: `/start`, `/settings timezone`, `/add` (одно время), `done`/`ok`/`+` с reply и fallback, ~15 тестов
+
+Текущие ограничения, которые снимают Фаза 4 и 5:
+- `/add` принимает только одно время — нет серий
+- `ParseAddCommand` возвращает `(label, repeat, timeStr string, err error)` — одиночное время
+- `Reminder.Times`, `MinGap` уже есть в модели и store, но не используются в domain
+- `NextInstance` всегда ставит исходное время из `times[]` — нет рескедула при `min_gap`
+- Нет `/schedule`, `/list`, `/skip`, `/snooze`, `/pause`, `/delete`
+- `done` всегда записывает `time.Now()` — нет `done HH:MM`
+- `once` reminder при `missed` не удаляется
+- Нет уведомления о рескедуле и предупреждения о выходе за полночь
+
+## Цель
+
+Полностью рабочий бот согласно спецификации v0.2:
+- Поддержка серий напоминаний с автоматическим пересчётом (`Reschedule`) при `min_gap`
+- Все команды управления: просмотр, пропуск, отсрочка, пауза, удаление
+- Корректная обработка `done HH:MM` с подтверждением времени в прошлом
+- Все corner cases из спецификации
+
+---
+
+## Фаза 4: серии и рескедулер
+
+### 4.1 store — новые методы
+
+- [ ] `GetInstancesByUserAndDay(db *sql.DB, userID string, date time.Time, loc *time.Location) ([]ReminderInstance, error)`:
+  - Принимает `date` и `loc` (timezone пользователя)
+  - Вычисляет начало и конец дня в timezone пользователя, конвертирует в UTC для SQL-запроса
+  - `scheduled_at BETWEEN startOfDayUTC AND endOfDayUTC`
+  - Использовать timezone пользователя, не UTC-день — иначе для UTC+3 "сегодня" начинается в 21:00 UTC предыдущего дня
+- [ ] `SetInstanceScheduledAt(db *sql.DB, id string, t time.Time) error` — обновляет `scheduled_at` и `updated_at` у Instance. Реализуется в Фазе 4, используется также в Фазе 5 (`/snooze`).
+
+### 4.2 Расширить `parseAddCommand` для серии с gap
+
+- [ ] Новая сигнатура: `parseAddCommand(text string) (label, repeat string, times []string, minGap *int, err error)`
+  - Заменяет старую `(label, repeat, timeStr string, err error)`
+  - `times` — один или несколько `HH:MM`, `minGap` — указатель на int (минуты) или nil
+
+- [ ] Новый формат команды:
+  ```
+  /add "Label" daily gap:3h 07:00 11:00 15:00 18:00 21:00   — серия с gap
+  /add "Label" daily 07:00 11:00 15:00                        — серия без gap
+  /add "Label" once 09:00                                     — одиночное (как сейчас)
+  ```
+- [ ] Парсинг `gap:3h` / `gap:30m`: извлечь число + единицу (h → ×60, m → ×1) → `*int` минуты. `gap:` опциональный, если отсутствует → `minGap = nil`
+- [ ] Все токены `HH:MM` валидируются через `time.Parse("15:04", v)`, ошибка если ни одного
+- [ ] В `handleAdd`: создать `Reminder` с `Times = times`, `MinGap = minGap`; первый Instance для `Times[0]` — как сейчас
+
+- [ ] Тесты:
+  - `TestParseAddCommand_Series` — `/add "Капли" daily 07:00 11:00 15:00` → `times=["07:00","11:00","15:00"]`, minGap=nil
+  - `TestParseAddCommand_WithGap` — `/add "Капли" daily gap:3h 07:00 11:00 15:00` → minGap=180
+  - `TestParseAddCommand_GapMinutes` — `gap:30m` → minGap=30
+  - `TestParseAddCommand_Single` — одиночное время — старый формат не сломан
+  - `TestParseAddCommand_InvalidGap` — `gap:xyz` → ошибка
+  - `TestParseAddCommand_InvalidTime` — `25:00` → ошибка
+  - `TestParseAddCommand_NoTimes` — нет времён → ошибка
+  - `TestHandleAdd_Series` — интеграционный: `/add` с серией → Reminder с Times, первый Instance создан
+
+### 4.3 Reschedule в domain
+
+- [ ] Новая функция `Reschedule(reminder store.Reminder, doneAt time.Time, fromIndex int, loc *time.Location) (adjustedTimes []time.Time, warning string)`:
+  - Если `reminder.MinGap == nil` → вернуть исходные времена из `reminder.Times[fromIndex+1:]` без изменений (конвертировать в time.Time для текущего дня)
+  - Начинать с `doneAt` как точки отсчёта
+  - Для каждого `reminder.Times[i]` где `i > fromIndex`:
+    - `originalTime = сегодня + Times[i]` в `loc`
+    - `earliestNext = предыдущее_adjusted + MinGap`
+    - `adjustedTimes[i] = max(originalTime, earliestNext)`
+  - Если последнее `adjustedTime` выходит за 23:59 в `loc` → `warning` непустой
+
+- [ ] Модифицировать `NextInstance`:
+  - Новая сигнатура: `func NextInstance(db *sql.DB, inst store.ReminderInstance) (warning string, err error)`
+  - После создания нового Instance:
+    - Загрузить User для получения timezone (`store.GetUserByID`)
+    - Если `reminder.MinGap != nil` и `inst.DoneAt != nil` → вызвать `Reschedule(reminder, *inst.DoneAt, inst.TimeIndex, loc)`
+    - Обновить `ScheduledAt` созданного Instance через `store.SetInstanceScheduledAt`
+    - Если Reschedule вернул warning → вернуть его из NextInstance
+  - Обновить все существующие вызовы NextInstance в bot и тестах под новую сигнатуру (warning пока можно игнорировать через `_`)
+
+- [ ] **Новый store-метод** `SetInstanceScheduledAt` — уже описан в 4.1
+
+- [ ] Тесты:
+  - `TestReschedule_ShiftsForward` — done в 09:00, min_gap=3h, исходные 07:00/11:00/15:00 → [12:00, 15:00] (11:00 сдвинуто до 12:00, 12+3=15 совпадает)
+  - `TestReschedule_NoShiftNeeded` — done в 06:00, min_gap=2h, исходные 09:00/12:00 → [09:00, 12:00] (не сдвигаем: 6+2=8 < 9)
+  - `TestReschedule_NilMinGap` — без MinGap → возвращает исходные времена
+  - `TestReschedule_LastPastMidnight` — последнее время после рескеда > 23:59 → warning непустой
+  - `TestNextInstance_WithReschedule` — после done с MinGap → новый Instance имеет скорректированное `scheduled_at`
+  - `TestNextInstance_RescheduleWarning` — warning возвращается при выходе за полночь
+  - `TestNextInstance_SignatureUpdate` — убедиться что старые тесты обновлены под новую сигнатуру
+
+### 4.4 Предупреждение и уведомление в bot
+
+- [ ] Обновить вызов `domain.NextInstance` в `bot/done.go`:
+  - Обрабатывать `warning` — если непустой, отправить пользователю: `"⚠️ Последний приём выходит за полночь — пропустить?"`
+
+- [ ] Уведомление о рескедуле:
+  - После NextInstance проверить: если `inst.DoneAt != nil` и у Reminder есть `MinGap` → рескедул был применён
+  - Перечитать все pending Instance цепочки (через `GetInstancesByUserAndDay`) и сформировать список актуальных времён
+  - Отправить: `"📅 Новое расписание: 12:00 · 15:00 · 18:00 · 21:00"` — только если хотя бы одно время сдвинулось относительно исходного `times[]`
+
+- [ ] Тесты:
+  - `TestHandleDone_RescheduleNotification` — done с MinGap → бот отправил `📅` сообщение
+  - `TestHandleDone_RescheduleWarning` — warning при выходе за полночь → бот отправил `⚠️`
+  - `TestHandleDone_NoRescheduleNotification` — без MinGap → `📅` не отправляется
+
+---
+
+## Фаза 5: полный бот
+
+### 5.1 store — новые методы
+
+- [ ] `GetInstancesByUserAndDay` — реализован в Фазе 4, здесь только используется
+- [ ] `SetInstanceScheduledAt` — реализован в Фазе 4, здесь только используется
+- [ ] `GetReminderInstancesByReminder(db *sql.DB, reminderID string) ([]ReminderInstance, error)` — все Instance для Reminder, для каскадного удаления
+- [ ] `DeleteReminderInstances(db *sql.DB, reminderID string) error` — удалить все Instance для Reminder
+- [ ] `SetStatusWithDoneAt(db *sql.DB, id string, status string, doneAt time.Time) error` — как `SetStatus("done")` но с конкретным `doneAt`. Только для статуса `"done"`.
+
+### 5.2 Команда `/schedule` и `/schedule tomorrow`
+
+- [ ] В `handler.go` добавить роутинг `/schedule` → `handleSchedule`
+- [ ] `handleSchedule`:
+  - Получить пользователя, проверить timezone
+  - Если аргумент `tomorrow` → дата = завтра в timezone пользователя, иначе сегодня
+  - `GetInstancesByUserAndDay(db, user.ID, date, loc)`
+  - Сгруппировать по `ReminderID`, для каждого показать label + времена со статусами
+  - Формат:
+    ```
+    📅 Расписание на сегодня:
+
+    Таблетка
+    ✅ 07:00
+    ⏳ 12:00
+
+    Капли
+    ⏳ 09:00
+    ⏳ 13:00
+    ⏳ 17:00
+    ```
+  - Иконки: `⏳` pending, `✅` done, `❌` missed, `⏭️` skipped
+
+- [ ] Тесты:
+  - `TestHandleSchedule_Today` — `/schedule` → Instance за сегодня
+  - `TestHandleSchedule_Tomorrow` — `/schedule tomorrow` → Instance за завтра
+  - `TestHandleSchedule_Empty` — нет Instance → "Нет напоминаний на сегодня"
+
+### 5.3 Команда `/list`
+
+- [ ] В `handler.go` добавить роутинг `/list` → `handleList`
+- [ ] `handleList`:
+  - `store.GetAll(userID)` → все Reminder шаблоны
+  - Формат:
+    ```
+    📋 Все напоминания:
+
+    Капли · daily
+    🆔 a1b2c3d4-e5f6-...
+    ⏰ 07:00 11:00 15:00 18:00 21:00 (gap: 3ч)
+
+    Отжимания · once
+    🆔 b2c3d4e5-...
+    ⏰ 09:00
+    ```
+
+- [ ] Тесты:
+  - `TestHandleList_WithReminders` — показывает все Reminder с форматированием
+  - `TestHandleList_Empty` — нет Reminder → "Нет настроенных напоминаний"
+
+### 5.4 Команда `/skip`
+
+- [ ] В `handler.go` добавить роутинг `/skip` → `handleSkip`
+- [ ] `handleSkip`:
+  - Получить пользователя
+  - `GetActiveByUser` → последний pending Instance
+  - Нет активных → "Нет активных напоминаний"
+  - `store.SetStatus(db, instance.ID, "skipped")` — не проставляет `done_at` (SetStatus проверяет `status == "done"`)
+  - `domain.NextInstance(db, instance)` — создаёт следующий, обрабатывает warning
+  - **Важно:** для NextInstance нужен актуальный Instance — перечитать из store после SetStatus, так как `DoneAt` используется в Reschedule. При `skipped` `DoneAt` будет nil → рескедул не применяется (это правильно)
+  - Ответ: `"⏭️ Label — пропущено"`
+
+- [ ] Тесты:
+  - `TestHandleSkip_Active` — skip → статус skipped, nextInstance создан с исходным временем (без рескедула)
+  - `TestHandleSkip_NoActive` — нет активных → сообщение
+  - `TestHandleSkip_LastIndex` — последний в цепочке → skipped, без nextInstance
+
+### 5.5 Команда `/snooze N`
+
+- [ ] В `handler.go` добавить роутинг `/snooze` → `handleSnooze`
+- [ ] `handleSnooze`:
+  - Парсинг: после `/snooze` целое число N (минуты). Валидация: N > 0 и N <= 1440 (24 часа) — ошибка если нет
+  - Получить пользователя
+  - `GetActiveByUser` → последний pending Instance
+  - Нет активных → "Нет активных напоминаний"
+  - `store.SetInstanceScheduledAt(db, instance.ID, now.Add(time.Duration(N)*time.Minute))`
+  - Instance остаётся `pending` — scheduler не обработает до нового времени
+  - Ответ: `"🔇 Label — напомню через N минут"`
+
+- [ ] Тесты:
+  - `TestHandleSnooze` — `/snooze 30` → `scheduled_at` сдвинут на 30 минут
+  - `TestHandleSnooze_Invalid` — `/snooze abc` → ошибка парсинга
+  - `TestHandleSnooze_OutOfRange` — `/snooze 0` и `/snooze 1441` → ошибка валидации
+  - `TestHandleSnooze_NoActive` — нет активных → сообщение
+
+### 5.6 Команды `/pause` и `/resume`
+
+- [ ] В `handler.go` добавить роутинг `/pause` и `/resume`
+- [ ] `handlePause`: `store.SetPaused(db, user.ID, true)` → `"⏸ Все напоминания приостановлены"`
+- [ ] `handleResume`: `store.SetPaused(db, user.ID, false)` → `"▶️ Напоминания возобновлены"`
+
+- [ ] Тесты:
+  - `TestHandlePause` — paused=true в store
+  - `TestHandleResume` — paused=false в store
+  - `TestHandleDone_WhilePaused` — done работает при paused=true (paused не блокирует команды)
+
+### 5.7 Команда `/delete <id>`
+
+- [ ] В `handler.go` добавить роутинг `/delete` → `handleDelete`
+- [ ] `handleDelete`:
+  - Парсинг: после `/delete` — полный UUID
+  - `store.GetByID(db, id)` — проверить что Reminder существует и `reminder.UserID == user.ID`
+  - Reminder не найден или чужой → "Напоминание не найдено"
+  - Каскадное удаление: `store.DeleteReminderInstances(db, id)` + `store.Delete(db, id)`
+  - **Безопасность race condition:** SQLite работает в режиме serial access для одного соединения — удаление и ticker не пересекутся. Приемлемо для однопользовательского бота.
+  - Ответ: `"🗑 Напоминание «Label» удалено"`
+
+- [ ] Тесты:
+  - `TestHandleDelete` — Reminder + все Instance удалены из store
+  - `TestHandleDelete_NotFound` — неверный UUID → ошибка
+  - `TestHandleDelete_WrongUser` — чужой Reminder → ошибка
+
+### 5.8 `done HH:MM` с подтверждением
+
+- [ ] В `handler.go` расширить роутинг: если текст начинается с `done `/`ok `/`+ ` и содержит `HH:MM` → `handleDoneWithTime`. Проверять до `handleDone` чтобы не перехватить.
+
+- [ ] `handleDoneWithTime`:
+  - Парсинг `HH:MM` из текста
+  - Получить пользователя, timezone
+  - `doneAt = сегодня + HH:MM` в timezone пользователя
+  - Если `doneAt` в будущем → "Указанное время в будущем. Используй `done` без времени."
+  - Если `doneAt` в прошлом:
+    - Сохранить в `pendingConfirm[chatID] = {InstanceID, DoneAt}` (in-memory `sync.Map`)
+    - Отправить: `"Записать выполнение в HH:MM? Отправь + для подтверждения."`
+
+- [ ] Обработка подтверждения в `HandleUpdate`:
+  - Если текст `+`/`yes`/`y` (после TrimSpace/ToLower) И в `pendingConfirm` есть запись для chatID:
+    - Загрузить Instance, проверить статус
+    - `store.SetStatusWithDoneAt(db, instanceID, "done", doneAt)`
+    - Перечитать Instance из store → `domain.NextInstance(db, updatedInst)` (DoneAt уже проставлен)
+    - Удалить из `pendingConfirm[chatID]`
+    - Ответ: `"✅ Label — записано в HH:MM"`
+  - Очистка: pending confirm удаляется через 5 минут горутиной-таймером или при следующем `done HH:MM`
+
+- [ ] **Важно — перечитывать Instance перед NextInstance:** после `SetStatusWithDoneAt` обязательно перечитать Instance из store, иначе `inst.DoneAt` будет nil и рескедул не применится.
+
+- [ ] **Новый store-метод** `SetStatusWithDoneAt` — отдельный SQL:
+  ```sql
+  UPDATE reminder_instances SET status='done', done_at=?, updated_at=? WHERE id=?
+  ```
+
+- [ ] Тесты:
+  - `TestHandleDone_WithTime_Past` — `done 06:30` в 11:00 → запрос подтверждения, pending confirm создан
+  - `TestHandleDone_TimeConfirm_Yes` — `+` после confirm → `done_at = 06:30`, NextInstance вызван
+  - `TestHandleDone_WithTime_Future` — `done 14:00` в 11:00 → ошибка
+  - `TestHandleDone_WithTime_NoConfirm` — `+` без pending confirm → обычный `done` (не handleDoneWithTime)
+
+### 5.9 Corner cases
+
+- [ ] **`once` при `missed`** (corner case 6):
+  - В `processPending` после `SetStatus("missed")`: загрузить Reminder, если `repeat == "once"`:
+    - Для `once` всегда `time_index == 0` и это последний — удалить безусловно
+    - `store.DeleteReminderInstances(db, reminder.ID)` + `store.Delete(db, reminder.ID)`
+  - Тихое удаление — пользователю сообщение не отправляется
+
+- [ ] **`done` при уже выполненном через reply** — уже обработано в `handleDone` (проверка статуса). Добавить явный тест `TestHandleDone_AlreadyDone_Reply`.
+
+- [ ] **paused не блокирует команды** — уже работает. Тест `TestHandleDone_WhilePaused` покрывает в 5.6.
+
+- [ ] Тесты:
+  - `TestProcessPending_OnceMissedDeleted` — once reminder после missed → удалён из store
+  - `TestHandleDone_AlreadyDone_Reply` — reply на done instance → "уже выполнено"
+
+### 5.10 Роутинг и финальная сборка
+
+- [ ] Обновить `handler.go`: все новые команды в `handleCommand` switch
+- [ ] Порядок проверки текста в `HandleUpdate`:
+  1. `IsCommand()` → команды
+  2. текст начинается с `done `/`ok `/`+ ` + содержит `HH:MM` → `handleDoneWithTime`
+  3. текст `done`/`ok`/`+` → `handleDone`
+  4. текст `+`/`yes`/`y` + есть `pendingConfirm[chatID]` → подтверждение `done HH:MM`
+  5. остальное → игнор
+- [ ] Обновить существующие тесты под новую сигнатуру `NextInstance` если ещё не обновлены
+- [ ] `cmd/main.go` — изменений не требует
+
+### 5.11 Тесты — общие
+
+- [ ] Прогнать все тесты фаз 1–3 после изменений Фазы 4–5 — убедиться что ничего не сломано
+- [ ] Итоговое покрытие: store ~50 тестов, domain ~20 тестов, bot ~35 тестов
+
+---
+
 ## Решения и договорённости
 
-- **Go module**: `github.com/a3bremind/a3bremindbot`, версия Go 1.25
-- **UUID**: `github.com/google/uuid` (uuid.New())
-- **Тесты**: `testing` + `github.com/stretchr/testify/assert`
-- **Миграция**: automigration в Go-коде, без .sql файлов
-- **Типы моделей**: domain использует store-типы напрямую (User, Reminder, ReminderInstance) — без дублирования структур
-- **MessageIDEntry**: структура в store, хранит messageID + unix-время отправки как JSON-объект в массиве message_ids
-- **AddMessageID**: принимает `messageID int, sentAt time.Time`, конвертирует в `SentAt.Unix()`, аппендит через `json_set`
-- **SetStatus("done")**: автоматически проставляет `done_at = time.Now()` — отдельный вызов `SetDoneAt` не нужен
-- **missed**: выставляется тихо после отправки последнего сообщения — отдельного `❌`-сообщения нет
-- **tick**: приватный метод, экспортируется для тестов через `export_test.go`
-- **SchedulerInterval**: 1 секунда (через time.Ticker)
-- **RepeatInterval**: 15 минут (переменная, тесты могут переопределить)
-- **RepeatCount**: 3 (переменная, тесты могут переопределить)
-- **ResetHour**: 03:00 по timezone пользователя (переменная, тесты могут переопределить)
-- **DailyReset защита**: проверка `last_reset_at` по дате в timezone пользователя, не по времени
-- **NextInstance**: срабатывает только при done/skipped, не при missed
-- **NextInstance для последнего index**: ничего не создаёт — одинаково для daily и once; для daily новую цепочку создаст DailyReset
-- **Rescheduler**: отложен в Фазу 4
-- **Notifier**: симплексный (SendMessage → (messageID, sentAt)). Domain не знает о Telegram. Реализован в bot/notifier.go.
-- **BotAPI interface**: ровно один метод `Send` — больше не добавлять
-- **`/add` с immediate instance**: первый Instance создаётся сразу. Если время прошло — scheduler пришлёт уведомление при следующем тике. Предупреждение — Фаза 5.
-- **`done_at`**: всегда `time.Now()` в момент `SetStatus("done")`. Ручное указание времени (`done 09:15`) — Фаза 5.
-- **`done` без reply**: берётся последний `pending` instance пользователя по `scheduled_at DESC`
-- **Неизвестные команды**: ответ "Неизвестная команда"
-- **Неизвестный текст**: игнорируется (кроме done/ok/+)
-- **done при paused**: работает — paused только для автоматических уведомлений
-- **Telegram токен**: через `TELEGRAM_BOT_TOKEN` env var, panic если пустой
-- **Путь к БД**: `bot.db` в CWD
-- **once-reminder завершение**: DailyReset пропускает once — явной пометки нет. Отложено на Фазу 5.
+- **Формат gap в /add**: `gap:3h` (часы) или `gap:30m` (минуты)
+- **`parseAddCommand` новая сигнатура**: `(label, repeat string, times []string, minGap *int, err error)`
+- **`SetInstanceScheduledAt`**: реализуется в Фазе 4, используется в Фазах 4 и 5
+- **`GetInstancesByUserAndDay`**: принимает `loc *time.Location`, вычисляет UTC-диапазон по timezone пользователя — не UTC-день
+- **snooze валидация**: N > 0 и N <= 1440 (24 часа)
+- **snooze механизм**: сдвиг `scheduled_at` текущего pending Instance через `SetInstanceScheduledAt`
+- **`/delete` ID**: полный UUID
+- **cascade delete**: `DeleteReminderInstances` + `Delete` вручную, без ON DELETE CASCADE. Безопасно при serial SQLite access.
+- **`SetStatusWithDoneAt`**: отдельный store-метод только для `"done"` с конкретным `doneAt`
+- **перечитывать Instance перед NextInstance**: обязательно после любого `SetStatus*` чтобы `DoneAt` был актуальным для Reschedule
+- **`done HH:MM` подтверждение**: in-memory `sync.Map`, ключ — chatID. Не переживает перезапуск. Таймаут 5 минут.
+- **`skipped` + NextInstance**: `DoneAt == nil` → рескедул не применяется, исходное время из `times[]`
+- **`once` при missed**: `time_index` всегда 0 и всегда последний — удалять безусловно
+- **paused не блокирует команды**: done, skip, snooze работают при paused=true
+- **Порядок `done` в HandleUpdate**: `done HH:MM` проверяется до `done` без времени
+- **`/help`**: не реализуем — краткая сводка в `/start`
+- **Reschedule notification**: отправляется только если хотя бы одно время реально сдвинулось
+- **NextInstance сигнатура**: `(db, inst) (warning string, err error)` — обновить все вызовы в bot и тестах
 
-## Открытые вопросы
 
-- **once-reminder завершение**: достаточно ли что DailyReset пропускает once, или нужно поле `completed` в Reminder? Отложено на Фазу 5.
+
+## Заметки по реализации
+
+- `handleAdd`: `reminder.Times = times`, `reminder.MinGap = minGap`, первый Instance для `Times[0]`
+- `handleSkip`: перечитать Instance после SetStatus("skipped") перед NextInstance — нужен актуальный объект (хотя DoneAt будет nil, это правильное поведение для skip)
+- `handleDoneWithTime` → подтверждение: шаг 4 в HandleUpdate должен идти до шага 3 (`done`/`ok`/`+`) чтобы `+` как подтверждение обрабатывался раньше чем `+` как синоним done
+- `GetInstancesByUserAndDay` для `/schedule`: группировать по `ReminderID` — загружать Reminder отдельно для получения label, или джойнить в SQL
+- Горутина очистки `pendingConfirm`: `time.AfterFunc(5*time.Minute, func() { pendingConfirm.Delete(chatID) })`
