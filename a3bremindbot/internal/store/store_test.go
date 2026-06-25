@@ -312,7 +312,7 @@ func TestCreateReminderInstance(t *testing.T) {
 		TimeIndex:   0,
 		ScheduledAt: now,
 		Status:      "pending",
-		MessageIDs:  []int{},
+		MessageIDs:  []MessageIDEntry{},
 	}
 
 	created, err := CreateInstance(db, inst)
@@ -326,22 +326,29 @@ func TestCreateReminderInstance(t *testing.T) {
 	assert.Nil(t, created.DoneAt)
 }
 
-func TestCreateReminderInstance_DefaultStatus(t *testing.T) {
+func TestCreateInstance_MessageIDsInit(t *testing.T) {
 	db := newTestDB(t)
 
 	u, _ := GetOrCreate(db, 21)
-	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Default status", Times: []string{"09:00"}, Repeat: "daily"})
+	r, _ := Create(db, Reminder{UserID: u.ID, Label: "MsgIDs init", Times: []string{"09:00"}, Repeat: "daily"})
 
 	inst := ReminderInstance{
 		ReminderID:  r.ID,
 		TimeIndex:   0,
 		ScheduledAt: time.Now(),
+		// MessageIDs is nil — should be initialized to []MessageIDEntry{}.
 	}
 
 	created, err := CreateInstance(db, inst)
 	require.NoError(t, err)
-	assert.Equal(t, "pending", created.Status)
+	assert.NotNil(t, created.MessageIDs)
 	assert.Empty(t, created.MessageIDs)
+
+	// Re-read from DB and verify the JSON is "[]" not "null".
+	got, err := GetInstanceByID(db, created.ID)
+	require.NoError(t, err)
+	assert.NotNil(t, got.MessageIDs)
+	assert.Empty(t, got.MessageIDs)
 }
 
 func TestGetInstanceByID(t *testing.T) {
@@ -421,7 +428,8 @@ func TestGetInstanceByMessageID(t *testing.T) {
 	})
 
 	// Add a message ID.
-	err := AddMessageID(db, inst.ID, 42)
+	now := time.Now()
+	err := AddMessageID(db, inst.ID, 42, now)
 	require.NoError(t, err)
 
 	got, err := GetInstanceByMessageID(db, 42)
@@ -435,7 +443,7 @@ func TestGetInstanceByMessageID(t *testing.T) {
 		ScheduledAt: time.Now(),
 		Status:      "pending",
 	})
-	err = AddMessageID(db, inst2.ID, 99)
+	err = AddMessageID(db, inst2.ID, 99, now)
 	require.NoError(t, err)
 
 	got2, err := GetInstanceByMessageID(db, 99)
@@ -525,21 +533,23 @@ func TestAddMessageID(t *testing.T) {
 	originalUpdatedAt := got.UpdatedAt
 	time.Sleep(10 * time.Millisecond)
 
+	now := time.Now()
+
 	// Add first message.
-	err := AddMessageID(db, inst.ID, 100)
+	err := AddMessageID(db, inst.ID, 100, now)
 	require.NoError(t, err)
 
 	got, err = GetInstanceByID(db, inst.ID)
 	require.NoError(t, err)
-	assert.Equal(t, []int{100}, got.MessageIDs)
+	assert.Equal(t, []MessageIDEntry{{MessageID: 100, SentAt: now.Unix()}}, got.MessageIDs)
 
 	// Add second message.
-	err = AddMessageID(db, inst.ID, 200)
+	err = AddMessageID(db, inst.ID, 200, now)
 	require.NoError(t, err)
 
 	got, err = GetInstanceByID(db, inst.ID)
 	require.NoError(t, err)
-	assert.Equal(t, []int{100, 200}, got.MessageIDs)
+	assert.Equal(t, []MessageIDEntry{{MessageID: 100, SentAt: now.Unix()}, {MessageID: 200, SentAt: now.Unix()}}, got.MessageIDs)
 	assert.GreaterOrEqual(t, got.UpdatedAt.Unix(), originalUpdatedAt.Unix(),
 		"updated_at should be >= original")
 }
@@ -555,11 +565,13 @@ func TestAddMessageID_Concurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(numGoroutines)
 
+	now := time.Now()
+
 	for i := 0; i < numGoroutines; i++ {
 		msgID := i + 1
 		go func() {
 			defer wg.Done()
-			err := AddMessageID(db, inst.ID, msgID)
+			err := AddMessageID(db, inst.ID, msgID, now)
 			assert.NoError(t, err)
 		}()
 	}
@@ -568,22 +580,22 @@ func TestAddMessageID_Concurrent(t *testing.T) {
 
 	got, err := GetInstanceByID(db, inst.ID)
 	require.NoError(t, err)
-	// Should have exactly numGoroutines unique message IDs.
+	// Should have exactly numGoroutines entries.
 	assert.Len(t, got.MessageIDs, numGoroutines)
 
 	// Each message ID from 1..numGoroutines should be present.
 	seen := make(map[int]bool)
-	for _, mid := range got.MessageIDs {
-		assert.False(t, seen[mid], "duplicate message_id %d", mid)
-		seen[mid] = true
-		assert.GreaterOrEqual(t, mid, 1)
-		assert.LessOrEqual(t, mid, numGoroutines)
+	for _, entry := range got.MessageIDs {
+		assert.False(t, seen[entry.MessageID], "duplicate message_id %d", entry.MessageID)
+		seen[entry.MessageID] = true
+		assert.GreaterOrEqual(t, entry.MessageID, 1)
+		assert.LessOrEqual(t, entry.MessageID, numGoroutines)
 	}
 }
 
 func TestAddMessageID_NotFound(t *testing.T) {
 	db := newTestDB(t)
-	err := AddMessageID(db, "nonexistent", 1)
+	err := AddMessageID(db, "nonexistent", 1, time.Now())
 	assert.ErrorContains(t, err, "not found")
 }
 

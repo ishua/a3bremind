@@ -9,6 +9,12 @@ import (
 	"github.com/google/uuid"
 )
 
+// MessageIDEntry holds a Telegram message ID and the unix timestamp when it was sent.
+type MessageIDEntry struct {
+	MessageID int   `json:"message_id"`
+	SentAt    int64 `json:"sent_at"` // unix timestamp
+}
+
 // ReminderInstance represents a single occurrence of a reminder.
 type ReminderInstance struct {
 	ID          string
@@ -17,7 +23,7 @@ type ReminderInstance struct {
 	ScheduledAt time.Time
 	DoneAt      *time.Time
 	Status      string
-	MessageIDs  []int
+	MessageIDs  []MessageIDEntry
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
@@ -31,7 +37,7 @@ func CreateInstance(db *sql.DB, i ReminderInstance) (ReminderInstance, error) {
 		i.Status = "pending"
 	}
 	if i.MessageIDs == nil {
-		i.MessageIDs = []int{}
+		i.MessageIDs = []MessageIDEntry{}
 	}
 	now := time.Now().Unix()
 	i.CreatedAt = time.Unix(now, 0)
@@ -110,8 +116,8 @@ func GetInstanceByMessageID(db *sql.DB, messageID int) (ReminderInstance, error)
 		if err != nil {
 			return ReminderInstance{}, err
 		}
-		for _, mid := range inst.MessageIDs {
-			if mid == messageID {
+		for _, entry := range inst.MessageIDs {
+			if entry.MessageID == messageID {
 				return inst, nil
 			}
 		}
@@ -157,11 +163,16 @@ func SetStatus(db *sql.DB, id string, status string) error {
 	return checkRowsAffected(res, "reminder_instance", id)
 }
 
-// AddMessageID appends a message_id to the instance's message_ids JSON array atomically via json_set.
-func AddMessageID(db *sql.DB, id string, messageID int) error {
-	const query = `UPDATE reminder_instances SET message_ids = json_set(message_ids, '$[#]', ?), updated_at = ? WHERE id = ?`
+// AddMessageID appends a MessageIDEntry to the instance's message_ids JSON array atomically via json_set.
+func AddMessageID(db *sql.DB, id string, messageID int, sentAt time.Time) error {
+	entry := MessageIDEntry{MessageID: messageID, SentAt: sentAt.Unix()}
+	entryJSON, err := json.Marshal(entry)
+	if err != nil {
+		return fmt.Errorf("marshal message_id entry: %w", err)
+	}
+	const query = `UPDATE reminder_instances SET message_ids = json_set(message_ids, '$[#]', json(?)), updated_at = ? WHERE id = ?`
 	now := time.Now().Unix()
-	res, err := db.Exec(query, messageID, now, id)
+	res, err := db.Exec(query, string(entryJSON), now, id)
 	if err != nil {
 		return fmt.Errorf("add message_id: %w", err)
 	}
@@ -193,6 +204,9 @@ func scanReminderInstance(row scannable) (ReminderInstance, error) {
 
 	if err := json.Unmarshal([]byte(messageIDsJSON), &i.MessageIDs); err != nil {
 		return ReminderInstance{}, fmt.Errorf("unmarshal message_ids: %w", err)
+	}
+	if i.MessageIDs == nil {
+		i.MessageIDs = []MessageIDEntry{}
 	}
 
 	return i, nil
