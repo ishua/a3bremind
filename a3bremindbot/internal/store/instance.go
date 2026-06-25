@@ -197,6 +197,42 @@ func SetStatus(db *sql.DB, id string, status string) error {
 	return checkRowsAffected(res, "reminder_instance", id)
 }
 
+// GetReminderInstancesByReminder retrieves all instances for a given reminder.
+func GetReminderInstancesByReminder(db *sql.DB, reminderID string) ([]ReminderInstance, error) {
+	const query = `SELECT id, reminder_id, time_index, scheduled_at, done_at, status, message_ids, created_at, updated_at
+		FROM reminder_instances WHERE reminder_id = ?`
+
+	rows, err := db.Query(query, reminderID)
+	if err != nil {
+		return nil, fmt.Errorf("get instances by reminder: %w", err)
+	}
+	defer rows.Close()
+
+	return scanReminderInstances(rows)
+}
+
+// DeleteReminderInstances deletes all instances for a given reminder.
+func DeleteReminderInstances(db *sql.DB, reminderID string) error {
+	const query = `DELETE FROM reminder_instances WHERE reminder_id = ?`
+	_, err := db.Exec(query, reminderID)
+	if err != nil {
+		return fmt.Errorf("delete reminder instances: %w", err)
+	}
+	return nil
+}
+
+// SetStatusWithDoneAt updates the status and done_at of a reminder instance.
+// Intended for "done" status with a specific doneAt time.
+func SetStatusWithDoneAt(db *sql.DB, id string, status string, doneAt time.Time) error {
+	const query = `UPDATE reminder_instances SET status = ?, done_at = ?, updated_at = ? WHERE id = ?`
+	now := time.Now().Unix()
+	res, err := db.Exec(query, status, doneAt.Unix(), now, id)
+	if err != nil {
+		return fmt.Errorf("set status with done_at: %w", err)
+	}
+	return checkRowsAffected(res, "reminder_instance", id)
+}
+
 // AddMessageID appends a MessageIDEntry to the instance's message_ids JSON array atomically via json_set.
 func AddMessageID(db *sql.DB, id string, messageID int, sentAt time.Time) error {
 	entry := MessageIDEntry{MessageID: messageID, SentAt: sentAt.Unix()}

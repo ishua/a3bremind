@@ -432,16 +432,16 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
 
 ### 5.1 store — новые методы
 
-- [ ] `GetInstancesByUserAndDay` — реализован в Фазе 4, здесь только используется
-- [ ] `SetInstanceScheduledAt` — реализован в Фазе 4, здесь только используется
-- [ ] `GetReminderInstancesByReminder(db *sql.DB, reminderID string) ([]ReminderInstance, error)` — все Instance для Reminder, для каскадного удаления
-- [ ] `DeleteReminderInstances(db *sql.DB, reminderID string) error` — удалить все Instance для Reminder
-- [ ] `SetStatusWithDoneAt(db *sql.DB, id string, status string, doneAt time.Time) error` — как `SetStatus("done")` но с конкретным `doneAt`. Только для статуса `"done"`.
+- [x] `GetInstancesByUserAndDay` — реализован в Фазе 4, здесь только используется
+- [x] `SetInstanceScheduledAt` — реализован в Фазе 4, здесь только используется
+- [x] `GetReminderInstancesByReminder(db *sql.DB, reminderID string) ([]ReminderInstance, error)` — все Instance для Reminder, для каскадного удаления
+- [x] `DeleteReminderInstances(db *sql.DB, reminderID string) error` — удалить все Instance для Reminder
+- [x] `SetStatusWithDoneAt(db *sql.DB, id string, status string, doneAt time.Time) error` — как `SetStatus("done")` но с конкретным `doneAt`. Только для статуса `"done"`.
 
 ### 5.2 Команда `/schedule` и `/schedule tomorrow`
 
-- [ ] В `handler.go` добавить роутинг `/schedule` → `handleSchedule`
-- [ ] `handleSchedule`:
+- [x] В `handler.go` добавить роутинг `/schedule` → `handleSchedule`
+- [x] `handleSchedule`:
   - Получить пользователя, проверить timezone
   - Если аргумент `tomorrow` → дата = завтра в timezone пользователя, иначе сегодня
   - `GetInstancesByUserAndDay(db, user.ID, date, loc)`
@@ -461,15 +461,15 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
     ```
   - Иконки: `⏳` pending, `✅` done, `❌` missed, `⏭️` skipped
 
-- [ ] Тесты:
+- [x] Тесты:
   - `TestHandleSchedule_Today` — `/schedule` → Instance за сегодня
   - `TestHandleSchedule_Tomorrow` — `/schedule tomorrow` → Instance за завтра
   - `TestHandleSchedule_Empty` — нет Instance → "Нет напоминаний на сегодня"
 
 ### 5.3 Команда `/list`
 
-- [ ] В `handler.go` добавить роутинг `/list` → `handleList`
-- [ ] `handleList`:
+- [x] В `handler.go` добавить роутинг `/list` → `handleList`
+- [x] `handleList`:
   - `store.GetAll(userID)` → все Reminder шаблоны
   - Формат:
     ```
@@ -484,14 +484,14 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
     ⏰ 09:00
     ```
 
-- [ ] Тесты:
-  - `TestHandleList_WithReminders` — показывает все Reminder с форматированием
-  - `TestHandleList_Empty` — нет Reminder → "Нет настроенных напоминаний"
+- [x] Тесты:
+  - [x] `TestHandleList_WithReminders` — показывает все Reminder с форматированием
+  - [x] `TestHandleList_Empty` — нет Reminder → "Нет настроенных напоминаний"
 
 ### 5.4 Команда `/skip`
 
-- [ ] В `handler.go` добавить роутинг `/skip` → `handleSkip`
-- [ ] `handleSkip`:
+- [x] В `handler.go` добавить роутинг `/skip` → `handleSkip`
+- [x] `handleSkip`:
   - Получить пользователя
   - `GetActiveByUser` → последний pending Instance
   - Нет активных → "Нет активных напоминаний"
@@ -500,15 +500,15 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
   - **Важно:** для NextInstance нужен актуальный Instance — перечитать из store после SetStatus, так как `DoneAt` используется в Reschedule. При `skipped` `DoneAt` будет nil → рескедул не применяется (это правильно)
   - Ответ: `"⏭️ Label — пропущено"`
 
-- [ ] Тесты:
-  - `TestHandleSkip_Active` — skip → статус skipped, nextInstance создан с исходным временем (без рескедула)
-  - `TestHandleSkip_NoActive` — нет активных → сообщение
-  - `TestHandleSkip_LastIndex` — последний в цепочке → skipped, без nextInstance
+- [x] Тесты:
+  - [x] `TestHandleSkip_Active` — skip → статус skipped, nextInstance создан с исходным временем (без рескедула)
+  - [x] `TestHandleSkip_NoActive` — нет активных → сообщение
+  - [x] `TestHandleSkip_LastIndex` — последний в цепочке → skipped, без nextInstance
 
 ### 5.5 Команда `/snooze N`
 
-- [ ] В `handler.go` добавить роутинг `/snooze` → `handleSnooze`
-- [ ] `handleSnooze`:
+- [x] В `handler.go` добавить роутинг `/snooze` → `handleSnooze`
+- [x] `handleSnooze`:
   - Парсинг: после `/snooze` целое число N (минуты). Валидация: N > 0 и N <= 1440 (24 часа) — ошибка если нет
   - Получить пользователя
   - `GetActiveByUser` → последний pending Instance
@@ -517,27 +517,27 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
   - Instance остаётся `pending` — scheduler не обработает до нового времени
   - Ответ: `"🔇 Label — напомню через N минут"`
 
-- [ ] Тесты:
-  - `TestHandleSnooze` — `/snooze 30` → `scheduled_at` сдвинут на 30 минут
-  - `TestHandleSnooze_Invalid` — `/snooze abc` → ошибка парсинга
-  - `TestHandleSnooze_OutOfRange` — `/snooze 0` и `/snooze 1441` → ошибка валидации
-  - `TestHandleSnooze_NoActive` — нет активных → сообщение
+- [x] Тесты:
+  - [x] `TestHandleSnooze` — `/snooze 30` → `scheduled_at` сдвинут на 30 минут
+  - [x] `TestHandleSnooze_Invalid` — `/snooze abc` → ошибка парсинга
+  - [x] `TestHandleSnooze_OutOfRange` — `/snooze 0` и `/snooze 1441` → ошибка валидации
+  - [x] `TestHandleSnooze_NoActive` — нет активных → сообщение
 
 ### 5.6 Команды `/pause` и `/resume`
 
-- [ ] В `handler.go` добавить роутинг `/pause` и `/resume`
-- [ ] `handlePause`: `store.SetPaused(db, user.ID, true)` → `"⏸ Все напоминания приостановлены"`
-- [ ] `handleResume`: `store.SetPaused(db, user.ID, false)` → `"▶️ Напоминания возобновлены"`
+- [x] В `handler.go` добавить роутинг `/pause` и `/resume`
+- [x] `handlePause`: `store.SetPaused(db, user.ID, true)` → `"⏸ Все напоминания приостановлены"`
+- [x] `handleResume`: `store.SetPaused(db, user.ID, false)` → `"▶️ Напоминания возобновлены"`
 
-- [ ] Тесты:
-  - `TestHandlePause` — paused=true в store
-  - `TestHandleResume` — paused=false в store
-  - `TestHandleDone_WhilePaused` — done работает при paused=true (paused не блокирует команды)
+- [x] Тесты:
+  - [x] `TestHandlePause` — paused=true в store
+  - [x] `TestHandleResume` — paused=false в store
+  - [x] `TestHandleDone_WhilePaused` — done работает при paused=true (paused не блокирует команды)
 
 ### 5.7 Команда `/delete <id>`
 
-- [ ] В `handler.go` добавить роутинг `/delete` → `handleDelete`
-- [ ] `handleDelete`:
+- [x] В `handler.go` добавить роутинг `/delete` → `handleDelete`
+- [x] `handleDelete`:
   - Парсинг: после `/delete` — полный UUID
   - `store.GetByID(db, id)` — проверить что Reminder существует и `reminder.UserID == user.ID`
   - Reminder не найден или чужой → "Напоминание не найдено"
@@ -545,16 +545,16 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
   - **Безопасность race condition:** SQLite работает в режиме serial access для одного соединения — удаление и ticker не пересекутся. Приемлемо для однопользовательского бота.
   - Ответ: `"🗑 Напоминание «Label» удалено"`
 
-- [ ] Тесты:
+- [x] Тесты:
   - `TestHandleDelete` — Reminder + все Instance удалены из store
   - `TestHandleDelete_NotFound` — неверный UUID → ошибка
   - `TestHandleDelete_WrongUser` — чужой Reminder → ошибка
 
 ### 5.8 `done HH:MM` с подтверждением
 
-- [ ] В `handler.go` расширить роутинг: если текст начинается с `done `/`ok `/`+ ` и содержит `HH:MM` → `handleDoneWithTime`. Проверять до `handleDone` чтобы не перехватить.
+- [x] В `handler.go` расширить роутинг: если текст начинается с `done `/`ok `/`+ ` и содержит `HH:MM` → `handleDoneWithTime`. Проверять до `handleDone` чтобы не перехватить.
 
-- [ ] `handleDoneWithTime`:
+- [x] `handleDoneWithTime`:
   - Парсинг `HH:MM` из текста
   - Получить пользователя, timezone
   - `doneAt = сегодня + HH:MM` в timezone пользователя
@@ -563,7 +563,7 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
     - Сохранить в `pendingConfirm[chatID] = {InstanceID, DoneAt}` (in-memory `sync.Map`)
     - Отправить: `"Записать выполнение в HH:MM? Отправь + для подтверждения."`
 
-- [ ] Обработка подтверждения в `HandleUpdate`:
+- [x] Обработка подтверждения в `HandleUpdate`:
   - Если текст `+`/`yes`/`y` (после TrimSpace/ToLower) И в `pendingConfirm` есть запись для chatID:
     - Загрузить Instance, проверить статус
     - `store.SetStatusWithDoneAt(db, instanceID, "done", doneAt)`
@@ -572,51 +572,51 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
     - Ответ: `"✅ Label — записано в HH:MM"`
   - Очистка: pending confirm удаляется через 5 минут горутиной-таймером или при следующем `done HH:MM`
 
-- [ ] **Важно — перечитывать Instance перед NextInstance:** после `SetStatusWithDoneAt` обязательно перечитать Instance из store, иначе `inst.DoneAt` будет nil и рескедул не применится.
+- [x] **Важно — перечитывать Instance перед NextInstance:** после `SetStatusWithDoneAt` обязательно перечитать Instance из store, иначе `inst.DoneAt` будет nil и рескедул не применится.
 
-- [ ] **Новый store-метод** `SetStatusWithDoneAt` — отдельный SQL:
-  ```sql
+- [x] **Новый store-метод** `SetStatusWithDoneAt` — отдельный SQL:
+```sql
   UPDATE reminder_instances SET status='done', done_at=?, updated_at=? WHERE id=?
   ```
 
-- [ ] Тесты:
-  - `TestHandleDone_WithTime_Past` — `done 06:30` в 11:00 → запрос подтверждения, pending confirm создан
-  - `TestHandleDone_TimeConfirm_Yes` — `+` после confirm → `done_at = 06:30`, NextInstance вызван
-  - `TestHandleDone_WithTime_Future` — `done 14:00` в 11:00 → ошибка
-  - `TestHandleDone_WithTime_NoConfirm` — `+` без pending confirm → обычный `done` (не handleDoneWithTime)
+- [x] Тесты:
+  - [x] `TestHandleDone_WithTime_Past` — `done 06:30` в 11:00 → запрос подтверждения, pending confirm создан
+  - [x] `TestHandleDone_TimeConfirm_Yes` — `+` после confirm → `done_at = 06:30`, NextInstance вызван
+  - [x] `TestHandleDone_WithTime_Future` — `done 14:00` в 11:00 → ошибка
+  - [x] `TestHandleDone_WithTime_NoConfirm` — `+` без pending confirm → обычный `done` (не handleDoneWithTime)
 
 ### 5.9 Corner cases
 
-- [ ] **`once` при `missed`** (corner case 6):
+- [x] **`once` при `missed`** (corner case 6):
   - В `processPending` после `SetStatus("missed")`: загрузить Reminder, если `repeat == "once"`:
     - Для `once` всегда `time_index == 0` и это последний — удалить безусловно
     - `store.DeleteReminderInstances(db, reminder.ID)` + `store.Delete(db, reminder.ID)`
   - Тихое удаление — пользователю сообщение не отправляется
 
-- [ ] **`done` при уже выполненном через reply** — уже обработано в `handleDone` (проверка статуса). Добавить явный тест `TestHandleDone_AlreadyDone_Reply`.
+- [x] **`done` при уже выполненном через reply** — уже обработано в `handleDone` (проверка статуса). Добавить явный тест `TestHandleDone_AlreadyDone_Reply`.
 
-- [ ] **paused не блокирует команды** — уже работает. Тест `TestHandleDone_WhilePaused` покрывает в 5.6.
+- [x] **paused не блокирует команды** — уже работает. Тест `TestHandleDone_WhilePaused` покрывает в 5.6.
 
-- [ ] Тесты:
-  - `TestProcessPending_OnceMissedDeleted` — once reminder после missed → удалён из store
-  - `TestHandleDone_AlreadyDone_Reply` — reply на done instance → "уже выполнено"
+- [x] Тесты:
+  - [x] `TestProcessPending_OnceMissedDeleted` — once reminder после missed → удалён из store
+  - [x] `TestHandleDone_AlreadyDone_Reply` — reply на done instance → "уже выполнено"
 
 ### 5.10 Роутинг и финальная сборка
 
-- [ ] Обновить `handler.go`: все новые команды в `handleCommand` switch
-- [ ] Порядок проверки текста в `HandleUpdate`:
+- [x] Обновить `handler.go`: все новые команды в `handleCommand` switch
+- [x] Порядок проверки текста в `HandleUpdate`:
   1. `IsCommand()` → команды
   2. текст начинается с `done `/`ok `/`+ ` + содержит `HH:MM` → `handleDoneWithTime`
   3. текст `done`/`ok`/`+` → `handleDone`
   4. текст `+`/`yes`/`y` + есть `pendingConfirm[chatID]` → подтверждение `done HH:MM`
   5. остальное → игнор
-- [ ] Обновить существующие тесты под новую сигнатуру `NextInstance` если ещё не обновлены
-- [ ] `cmd/main.go` — изменений не требует
+- [x] Обновить существующие тесты под новую сигнатуру `NextInstance` если ещё не обновлены
+- [x] `cmd/main.go` — изменений не требует
 
 ### 5.11 Тесты — общие
 
-- [ ] Прогнать все тесты фаз 1–3 после изменений Фазы 4–5 — убедиться что ничего не сломано
-- [ ] Итоговое покрытие: store ~50 тестов, domain ~20 тестов, bot ~35 тестов
+- [x] Прогнать все тесты фаз 1–3 после изменений Фазы 4–5 — убедиться что ничего не сломано
+- [x] Итоговое покрытие: store ~50 тестов, domain ~20 тестов, bot ~35 тестов
 
 ---
 

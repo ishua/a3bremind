@@ -83,5 +83,16 @@ func (s *Scheduler) processInstance(inst store.ReminderInstance, now time.Time) 
 		if err := store.SetStatus(s.db, inst.ID, "missed"); err != nil {
 			log.Printf("set status missed for instance %s: %v", inst.ID, err)
 		}
+
+		// If the reminder is "once", delete it and all its instances
+		if reminder.Repeat == "once" {
+			if err := store.DeleteReminderInstances(s.db, reminder.ID); err != nil {
+				log.Printf("delete instances for once reminder %s: %v", reminder.ID, err)
+			}
+			if err := store.Delete(s.db, reminder.ID); err != nil {
+				log.Printf("delete once reminder %s: %v", reminder.ID, err)
+			}
+			log.Printf("once reminder %s (%s) deleted after missed", reminder.ID, reminder.Label)
+		}
 	}
 }

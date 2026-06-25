@@ -232,6 +232,54 @@ func TestProcessPending_Missed(t *testing.T) {
 	assert.Len(t, got.MessageIDs, 2)
 }
 
+func TestProcessPending_OnceMissedDeleted(t *testing.T) {
+	resetGlobals()
+	RepeatCount = 2
+	RepeatInterval = 1 * time.Millisecond
+	defer resetGlobals()
+
+	db, notifier, s := setup(t)
+
+	u := createTestUser(t, db, 104, "UTC")
+	r := createTestReminder(t, db, u.ID, "Once missed", []string{"09:00"}, "once")
+
+	now := time.Now().Truncate(time.Second)
+	past := now.Add(-1 * time.Hour)
+
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   0,
+		ScheduledAt: past,
+		Status:      "pending",
+	})
+	require.NoError(t, err)
+
+	// Add RepeatCount-1 entries (1 entry since RepeatCount=2).
+	oldSentAt := now.Add(-2 * RepeatInterval)
+	err = store.AddMessageID(db, inst.ID, 1, oldSentAt)
+	require.NoError(t, err)
+
+	Tick(s, now)
+
+	// Should have sent the last notification.
+	assert.Equal(t, 1, notifier.Len())
+	assert.Contains(t, notifier.calls[0].Text, "🔔")
+	assert.Contains(t, notifier.calls[0].Text, "(попытка 2/2)")
+
+	// Instance should no longer exist (deleted with the once reminder).
+	_, err = store.GetInstanceByID(db, inst.ID)
+	assert.ErrorContains(t, err, "not found")
+
+	// Reminder should also be deleted.
+	_, err = store.GetByID(db, r.ID)
+	assert.ErrorContains(t, err, "not found")
+
+	// No active instances for user.
+	active, err := store.GetActiveByUser(db, u.ID)
+	require.NoError(t, err)
+	assert.Empty(t, active)
+}
+
 func setup(t *testing.T) (*sql.DB, *mockNotifier, *Scheduler) {
 	t.Helper()
 	db := newTestDB(t)

@@ -2,6 +2,7 @@ package bot_test
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -722,4 +723,673 @@ func TestHandleDone_PlusSynonym(t *testing.T) {
 
 	text := mock.LastText()
 	assert.Contains(t, text, "✅")
+}
+
+// ---------------------------------------------------------------------------
+// /schedule tests
+// ---------------------------------------------------------------------------
+
+func TestHandleSchedule_Today(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Test reminder",
+		Times:  []string{"09:00", "12:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	now := time.Now().Truncate(time.Second)
+	// Сегодня в 09:00
+	today09 := time.Date(now.Year(), now.Month(), now.Day(), 9, 0, 0, 0, time.UTC)
+	// Сегодня в 12:00
+	today12 := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC)
+
+	store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   0,
+		ScheduledAt: today09,
+		Status:      "done",
+	})
+	store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   1,
+		ScheduledAt: today12,
+		Status:      "pending",
+	})
+
+	upd := updateWithCommand("/schedule")
+	h.HandleUpdate(upd)
+
+	text := mock.LastText()
+	assert.Contains(t, text, "📅")
+	assert.Contains(t, text, "Test reminder")
+	assert.Contains(t, text, "✅")
+	assert.Contains(t, text, "⏳")
+	assert.Contains(t, text, "09:00")
+	assert.Contains(t, text, "12:00")
+}
+
+func TestHandleSchedule_Tomorrow(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Tomorrow reminder",
+		Times:  []string{"10:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	now := time.Now().Truncate(time.Second)
+	tomorrow := now.Add(24 * time.Hour)
+	tomorrow10 := time.Date(tomorrow.Year(), tomorrow.Month(), tomorrow.Day(), 10, 0, 0, 0, time.UTC)
+
+	store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   0,
+		ScheduledAt: tomorrow10,
+		Status:      "pending",
+	})
+
+	upd := updateWithCommand("/schedule tomorrow")
+	h.HandleUpdate(upd)
+
+	text := mock.LastText()
+	assert.Contains(t, text, "📅")
+	assert.Contains(t, text, "завтра")
+	assert.Contains(t, text, "Tomorrow reminder")
+	assert.Contains(t, text, "10:00")
+}
+
+func TestHandleSchedule_Empty(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	upd := updateWithCommand("/schedule")
+	h.HandleUpdate(upd)
+
+	text := mock.LastText()
+	assert.Contains(t, text, "Нет напоминаний на сегодня")
+}
+
+func TestHandleSchedule_NoTimezone(t *testing.T) {
+	_, mock, h := setup(t)
+
+	upd := updateWithCommand("/schedule")
+	h.HandleUpdate(upd)
+
+	text := mock.LastText()
+	assert.Contains(t, text, "часовой пояс")
+}
+
+// ---------------------------------------------------------------------------
+// /list tests
+// ---------------------------------------------------------------------------
+
+func TestHandleList_WithReminders(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	minGap := 180
+	store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Капли",
+		Times:  []string{"07:00", "11:00", "15:00", "18:00", "21:00"},
+		MinGap: &minGap,
+		Repeat: "daily",
+	})
+	store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Отжимания",
+		Times:  []string{"09:00"},
+		Repeat: "once",
+	})
+
+	upd := updateWithCommand("/list")
+	h.HandleUpdate(upd)
+
+	text := mock.LastText()
+	assert.Contains(t, text, "📋")
+	assert.Contains(t, text, "Капли")
+	assert.Contains(t, text, "Отжимания")
+	assert.Contains(t, text, "daily")
+	assert.Contains(t, text, "once")
+	assert.Contains(t, text, "07:00 11:00 15:00 18:00 21:00")
+	assert.Contains(t, text, "09:00")
+	assert.Contains(t, text, "gap: 3ч")
+}
+
+func TestHandleList_Empty(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	upd := updateWithCommand("/list")
+	h.HandleUpdate(upd)
+
+	text := mock.LastText()
+	assert.Contains(t, text, "Нет настроенных напоминаний")
+}
+
+// ---------------------------------------------------------------------------
+// /skip tests
+// ---------------------------------------------------------------------------
+
+func TestHandleSkip_Active(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Skip test",
+		Times:  []string{"09:00", "12:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	now := time.Now().Truncate(time.Second)
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   0,
+		ScheduledAt: now.Add(-1 * time.Hour),
+		Status:      "pending",
+	})
+	require.NoError(t, err)
+
+	upd := updateWithCommand("/skip")
+	h.HandleUpdate(upd)
+
+	text := mock.LastText()
+	assert.Contains(t, text, "⏭️")
+	assert.Contains(t, text, "Skip test")
+	assert.Contains(t, text, "пропущено")
+
+	// Verify instance is skipped
+	got, err := store.GetInstanceByID(db, inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "skipped", got.Status)
+
+	// Verify next instance was created (time_index=1)
+	active, err := store.GetActiveByUser(db, user.ID)
+	require.NoError(t, err)
+	require.Len(t, active, 1)
+	assert.Equal(t, 1, active[0].TimeIndex)
+}
+
+func TestHandleSkip_NoActive(t *testing.T) {
+	_, mock, h := setup(t)
+
+	upd := updateWithCommand("/skip")
+	h.HandleUpdate(upd)
+
+	text := mock.LastText()
+	assert.Contains(t, text, "Нет активных напоминаний")
+}
+
+func TestHandleSkip_LastIndex(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	// Only one time — last index is 0
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Single",
+		Times:  []string{"09:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	now := time.Now().Truncate(time.Second)
+	store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   0,
+		ScheduledAt: now.Add(-1 * time.Hour),
+		Status:      "pending",
+	})
+
+	upd := updateWithCommand("/skip")
+	h.HandleUpdate(upd)
+
+	// Should be skipped without creating next instance
+	text := mock.LastText()
+	assert.Contains(t, text, "⏭️")
+
+	// No active instances remain
+	active, err := store.GetActiveByUser(db, user.ID)
+	require.NoError(t, err)
+	assert.Empty(t, active)
+}
+
+// ---------------------------------------------------------------------------
+// /snooze tests
+// ---------------------------------------------------------------------------
+
+func TestHandleSnooze(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Snooze test",
+		Times:  []string{"09:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	originalTime := time.Now().Add(-1 * time.Hour).Truncate(time.Second)
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   0,
+		ScheduledAt: originalTime,
+		Status:      "pending",
+	})
+	require.NoError(t, err)
+
+	// Snooze for 30 minutes
+	upd := updateWithCommand("/snooze 30")
+	h.HandleUpdate(upd)
+
+	text := mock.LastText()
+	assert.Contains(t, text, "🔇")
+	assert.Contains(t, text, "Snooze test")
+	assert.Contains(t, text, "30 минут")
+
+	// Verify scheduled_at was shifted
+	got, err := store.GetInstanceByID(db, inst.ID)
+	require.NoError(t, err)
+	assert.Greater(t, got.ScheduledAt.Unix(), originalTime.Unix(),
+		"scheduled_at should be shifted forward")
+}
+
+func TestHandleSnooze_Invalid(t *testing.T) {
+	_, mock, h := setup(t)
+
+	upd := updateWithCommand("/snooze abc")
+	h.HandleUpdate(upd)
+
+	text := mock.LastText()
+	assert.Contains(t, text, "Использование")
+}
+
+func TestHandleSnooze_OutOfRange(t *testing.T) {
+	_, mock, h := setup(t)
+
+	// Test 0
+	upd := updateWithCommand("/snooze 0")
+	h.HandleUpdate(upd)
+	text := mock.LastText()
+	assert.Contains(t, text, "Использование")
+
+	// Test 1441 (over 24h)
+	mock.sent = nil
+	upd = updateWithCommand("/snooze 1441")
+	h.HandleUpdate(upd)
+	text = mock.LastText()
+	assert.Contains(t, text, "Использование")
+}
+
+func TestHandleSnooze_NoActive(t *testing.T) {
+	_, mock, h := setup(t)
+
+	upd := updateWithCommand("/snooze 30")
+	h.HandleUpdate(upd)
+
+	text := mock.LastText()
+	assert.Contains(t, text, "Нет активных напоминаний")
+}
+
+// ---------------------------------------------------------------------------
+// /pause and /resume tests
+// ---------------------------------------------------------------------------
+
+func TestHandlePause(t *testing.T) {
+	db, mock, h := setup(t)
+
+	_, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+
+	upd := updateWithCommand("/pause")
+	h.HandleUpdate(upd)
+
+	text := mock.LastText()
+	assert.Contains(t, text, "⏸")
+
+	got, err := store.GetByTelegramID(db, 12345)
+	require.NoError(t, err)
+	assert.True(t, got.Paused)
+}
+
+func TestHandleResume(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+
+	// First pause
+	_ = store.SetPaused(db, user.ID, true)
+
+	upd := updateWithCommand("/resume")
+	h.HandleUpdate(upd)
+
+	text := mock.LastText()
+	assert.Contains(t, text, "▶️")
+
+	got, err := store.GetByTelegramID(db, 12345)
+	require.NoError(t, err)
+	assert.False(t, got.Paused)
+}
+
+func TestHandleDone_WhilePaused(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	// Pause the user
+	err = store.SetPaused(db, user.ID, true)
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Paused test",
+		Times:  []string{"09:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   0,
+		ScheduledAt: time.Now().Add(-1 * time.Hour),
+		Status:      "pending",
+	})
+	require.NoError(t, err)
+
+	err = store.AddMessageID(db, inst.ID, 500, time.Now())
+	require.NoError(t, err)
+
+	upd := tgbotapi.Update{
+		Message: &tgbotapi.Message{
+			Text: "done",
+			Chat: &tgbotapi.Chat{ID: 12345},
+			From: &tgbotapi.User{ID: 12345},
+			ReplyToMessage: &tgbotapi.Message{
+				MessageID: 500,
+			},
+		},
+	}
+
+	h.HandleUpdate(upd)
+
+	// done should work even when paused
+	text := mock.LastText()
+	assert.Contains(t, text, "✅")
+
+	got, err := store.GetInstanceByID(db, inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "done", got.Status)
+}
+
+// ---------------------------------------------------------------------------
+// done HH:MM tests
+// ---------------------------------------------------------------------------
+
+func TestHandleDone_WithTime_Past(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Past test",
+		Times:  []string{"09:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   0,
+		ScheduledAt: time.Now().Add(-2 * time.Hour),
+		Status:      "pending",
+	})
+
+	// "done 06:30" which is in the past
+	upd := updateWithText("done 06:30")
+	h.HandleUpdate(upd)
+
+	text := mock.LastText()
+	assert.Contains(t, text, "Записать")
+	assert.Contains(t, text, "06:30")
+	assert.Contains(t, text, "+")
+}
+
+func TestHandleDone_TimeConfirm_Yes(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Confirm test",
+		Times:  []string{"09:00", "12:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   0,
+		ScheduledAt: time.Now().Add(-2 * time.Hour),
+		Status:      "pending",
+	})
+	require.NoError(t, err)
+
+	// First: done HH:MM to set up pending confirm
+	upd1 := updateWithText("done 06:30")
+	h.HandleUpdate(upd1)
+
+	// Now: confirm with "+"
+	upd2 := updateWithText("+")
+	h.HandleUpdate(upd2)
+
+	// Should have sent "✅ Confirm test — записано в 06:30"
+	text := mock.LastText()
+	assert.Contains(t, text, "✅")
+	assert.Contains(t, text, "Confirm test")
+	assert.Contains(t, text, "06:30")
+
+	// Verify instance is done with done_at = 06:30
+	got, err := store.GetInstanceByID(db, inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "done", got.Status)
+	require.NotNil(t, got.DoneAt)
+	assert.Equal(t, 6, got.DoneAt.In(time.UTC).Hour())
+	assert.Equal(t, 30, got.DoneAt.In(time.UTC).Minute())
+
+	// Next instance should be created
+	active, err := store.GetActiveByUser(db, user.ID)
+	require.NoError(t, err)
+	require.Len(t, active, 1)
+	assert.Equal(t, 1, active[0].TimeIndex)
+}
+
+func TestHandleDone_WithTime_Future(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	r, _ := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Future test",
+		Times:  []string{"09:00"},
+		Repeat: "daily",
+	})
+	store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   0,
+		ScheduledAt: time.Now().Add(-2 * time.Hour),
+		Status:      "pending",
+	})
+
+	// A time 1 hour in the future
+	futureTime := time.Now().In(time.UTC).Add(1 * time.Hour).Format("15:04")
+	upd := updateWithText("done " + futureTime)
+	h.HandleUpdate(upd)
+
+	text := mock.LastText()
+	assert.Contains(t, text, "будущем")
+}
+
+func TestHandleDone_WithTime_NoConfirm(t *testing.T) {
+	_, mock, h := setup(t)
+
+	// Just "+" without any pending confirm → should be treated as normal done
+	// Since there are no active instances, should say "Нет активных напоминаний"
+	upd := updateWithText("+")
+	h.HandleUpdate(upd)
+
+	text := mock.LastText()
+	assert.Contains(t, text, "Нет активных напоминаний")
+}
+
+func TestHandleDelete(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Delete me",
+		Times:  []string{"09:00", "12:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	// Create instances
+	store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   0,
+		ScheduledAt: time.Now(),
+		Status:      "pending",
+	})
+	store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   1,
+		ScheduledAt: time.Now().Add(3 * time.Hour),
+		Status:      "pending",
+	})
+
+	upd := updateWithCommand(fmt.Sprintf("/delete %s", r.ID))
+	h.HandleUpdate(upd)
+
+	text := mock.LastText()
+	assert.Contains(t, text, "🗑")
+	assert.Contains(t, text, "Delete me")
+
+	// Reminder should be gone
+	_, err = store.GetByID(db, r.ID)
+	assert.ErrorContains(t, err, "not found")
+
+	// Instances should be gone
+	instances, err := store.GetReminderInstancesByReminder(db, r.ID)
+	require.NoError(t, err)
+	assert.Empty(t, instances)
+}
+
+func TestHandleDelete_NotFound(t *testing.T) {
+	_, mock, h := setup(t)
+
+	upd := updateWithCommand("/delete nonexistent-uuid")
+	h.HandleUpdate(upd)
+
+	text := mock.LastText()
+	assert.Contains(t, text, "Напоминание не найдено")
+}
+
+func TestHandleDelete_WrongUser(t *testing.T) {
+	db, mock, h := setup(t)
+
+	// Create user and reminder
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Not yours",
+		Times:  []string{"09:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	// Different chat ID — different user
+	upd := tgbotapi.Update{
+		Message: &tgbotapi.Message{
+			Text: fmt.Sprintf("/delete %s", r.ID),
+			Chat: &tgbotapi.Chat{ID: 99999},
+			From: &tgbotapi.User{ID: 99999},
+		},
+	}
+	// Manually set bot_command entities for IsCommand() to work
+	upd.Message.Entities = []tgbotapi.MessageEntity{
+		{Type: "bot_command", Offset: 0, Length: len(fmt.Sprintf("/delete %s", r.ID))},
+	}
+
+	h.HandleUpdate(upd)
+
+	text := mock.LastText()
+	assert.Contains(t, text, "Напоминание не найдено")
+
+	// Original reminder should still exist
+	_, err = store.GetByID(db, r.ID)
+	require.NoError(t, err)
 }

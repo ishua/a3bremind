@@ -850,3 +850,115 @@ func TestSetInstanceScheduledAt_NotFound(t *testing.T) {
 	err := SetInstanceScheduledAt(db, "nonexistent", time.Now())
 	assert.ErrorContains(t, err, "not found")
 }
+
+// ---------------------------------------------------------------------------
+// GetReminderInstancesByReminder tests
+// ---------------------------------------------------------------------------
+
+func TestGetReminderInstancesByReminder(t *testing.T) {
+	db := newTestDB(t)
+
+	u, _ := GetOrCreate(db, 920)
+	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Test", Times: []string{"09:00", "12:00"}, Repeat: "daily"})
+
+	inst1, _ := CreateInstance(db, ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   0,
+		ScheduledAt: time.Date(2026, 6, 25, 9, 0, 0, 0, time.UTC),
+		Status:      "done",
+	})
+	inst2, _ := CreateInstance(db, ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   1,
+		ScheduledAt: time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC),
+		Status:      "pending",
+	})
+
+	instances, err := GetReminderInstancesByReminder(db, r.ID)
+	require.NoError(t, err)
+	require.Len(t, instances, 2)
+	assert.Equal(t, inst1.ID, instances[0].ID)
+	assert.Equal(t, inst2.ID, instances[1].ID)
+}
+
+func TestGetReminderInstancesByReminder_Empty(t *testing.T) {
+	db := newTestDB(t)
+
+	instances, err := GetReminderInstancesByReminder(db, "nonexistent")
+	require.NoError(t, err)
+	assert.Empty(t, instances)
+}
+
+// ---------------------------------------------------------------------------
+// DeleteReminderInstances tests
+// ---------------------------------------------------------------------------
+
+func TestDeleteReminderInstances(t *testing.T) {
+	db := newTestDB(t)
+
+	u, _ := GetOrCreate(db, 930)
+	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Test", Times: []string{"09:00"}, Repeat: "daily"})
+
+	CreateInstance(db, ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   0,
+		ScheduledAt: time.Now(),
+		Status:      "pending",
+	})
+	CreateInstance(db, ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   1,
+		ScheduledAt: time.Now(),
+		Status:      "pending",
+	})
+
+	err := DeleteReminderInstances(db, r.ID)
+	require.NoError(t, err)
+
+	instances, err := GetReminderInstancesByReminder(db, r.ID)
+	require.NoError(t, err)
+	assert.Empty(t, instances)
+}
+
+func TestDeleteReminderInstances_NoInstances(t *testing.T) {
+	db := newTestDB(t)
+
+	// Deleting instances for a reminder that has none should not error.
+	err := DeleteReminderInstances(db, "nonexistent")
+	require.NoError(t, err)
+}
+
+// ---------------------------------------------------------------------------
+// SetStatusWithDoneAt tests
+// ---------------------------------------------------------------------------
+
+func TestSetStatusWithDoneAt(t *testing.T) {
+	db := newTestDB(t)
+
+	u, _ := GetOrCreate(db, 940)
+	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Test", Times: []string{"09:00"}, Repeat: "daily"})
+
+	inst, _ := CreateInstance(db, ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   0,
+		ScheduledAt: time.Date(2026, 6, 25, 9, 0, 0, 0, time.UTC),
+		Status:      "pending",
+	})
+
+	doneAt := time.Date(2026, 6, 25, 8, 30, 0, 0, time.UTC)
+	err := SetStatusWithDoneAt(db, inst.ID, "done", doneAt)
+	require.NoError(t, err)
+
+	got, err := GetInstanceByID(db, inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "done", got.Status)
+	require.NotNil(t, got.DoneAt)
+	assert.Equal(t, doneAt.Unix(), got.DoneAt.Unix())
+}
+
+func TestSetStatusWithDoneAt_NotFound(t *testing.T) {
+	db := newTestDB(t)
+
+	err := SetStatusWithDoneAt(db, "nonexistent", "done", time.Now())
+	assert.ErrorContains(t, err, "not found")
+}
