@@ -32,7 +32,7 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
 - [x] 1.5 ReminderInstance CRUD (instance.go)
 - [x] 1.6 Юнит-тесты с SQLite in-memory
 - [x] 1.7 Атомарный AddMessageID через json_set
-- [x] 1.8 Изменить MessageIDs с []int на []MessageIDEntry{MessageID, SentAt}
+- [ ] 1.8 Изменить MessageIDs с []int на []MessageIDEntry{MessageID, SentAt}
   - Определить в `instance.go` структуру `MessageIDEntry`:
     ```go
     type MessageIDEntry struct {
@@ -187,7 +187,7 @@ Go module `github.com/a3bremind/a3bremindbot`, UUID через `google/uuid`, SQ
 
 ## Решения и договорённости
 
-- **Go module**: `github.com/a3bremind/a3bremindbot`, версия Go 1.26
+- **Go module**: `github.com/a3bremind/a3bremindbot`, версия Go 1.25
 - **UUID**: `github.com/google/uuid` (uuid.New())
 - **Тесты**: `testing` + `github.com/stretchr/testify/assert`
 - **Миграция**: automigration в Go-коде, без .sql файлов
