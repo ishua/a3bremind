@@ -15,6 +15,7 @@
 | `telegram_id` | int | Telegram user ID |
 | `timezone` | string | Часовой пояс, например `Europe/Berlin` |
 | `paused` | bool | Все напоминания приостановлены |
+| `last_reset_at` | datetime (UTC) / null | Время последнего сброса дня. Защита от двойного срабатывания |
 
 Timezone задаётся один раз при `/start`, меняется через `/settings timezone`.
 Telegram не передаёт timezone пользователя — спрашиваем явно.
@@ -164,11 +165,15 @@ done в 09:00:
 ### 6. `once` не выполнен (missed)
 Instance остаётся в истории как `missed`. Reminder удаляется — на следующий день не восстанавливается.
 
-### 7. Сброс в полночь
-В 00:00 (по timezone пользователя) все `daily` Reminder запускают новую цепочку Instances с исходными временами.
+### 7. Сброс дня
+В 03:00 (по timezone пользователя) — смещение от полуночи чтобы не мешать поздним сессиям. Все `daily` Reminder запускают новую цепочку Instances с исходными временами. `last_reset_at` на User обновляется чтобы не сработать дважды.
 
 ### 8. Пауза во время активного Instance
 `/pause` пока Instance в статусе `pending` → бот перестаёт слать повторы. Instance остаётся `pending`. После `/resume` — повторы возобновляются с того же Instance.
+
+---
+
+## Уведомления
 
 | Событие | Сообщение |
 |---|---|
@@ -188,3 +193,134 @@ Instance остаётся в истории как `missed`. Reminder удаля
 | `repeat_interval` | 15 мин | Интервал повтора напоминания |
 | `repeat_count` | 3 | Количество повторов до `missed` |
 | `timezone` | спрашивается при /start | Часовой пояс пользователя |
+
+---
+
+## Технологии
+
+| Роль | Пакет |
+|---|---|
+| Язык | Go |
+| Telegram API | `github.com/go-telegram-bot-api/telegram-bot-api` |
+| База данных | SQLite via `modernc.org/sqlite` (pure Go, без cgo) |
+| SQL | `database/sql` (стандартная библиотека) |
+| Планировщик | `time.Ticker` (стандартная библиотека) |
+
+Никаких ORM — чистый SQL. Никаких внешних планировщиков — один ticker раз в секунду.
+
+---
+
+## Архитектура
+
+### Структура проекта
+
+```
+/cmd
+  main.go                 — точка входа, wire-up зависимостей
+
+/internal
+  /store                  — слой данных, только SQL, без бизнес-логики
+    db.go                 — инициализация БД, миграции
+    user.go
+    reminder.go
+    instance.go
+
+  /domain                 — бизнес-логика, не знает о Telegram
+    scheduler.go          — ticker 1/сек: проверка instances + сброс дня
+    reminder.go           — создание цепочки instances, рескедулер
+    user.go               — pause/resume, смена timezone
+
+  /bot                    — интеграция с Telegram
+    handler.go            — роутинг входящих команд и сообщений
+    commands.go           — /start /add /schedule /pause /delete etc
+    messages.go           — форматирование исходящих сообщений
+```
+
+`store` не знает о `domain`. `domain` использует `store`. `bot` вызывает `domain`. Зависимости строго в одну сторону.
+
+### Слой данных (store)
+
+**user.go**
+- `Create(telegramID int) (User, error)`
+- `GetByTelegramID(telegramID int) (User, error)`
+- `SetTimezone(userID uuid, tz string) error`
+- `SetPaused(userID uuid, paused bool) error`
+- `SetLastResetAt(userID uuid, t time.Time) error`
+
+**reminder.go**
+- `Create(r Reminder) (Reminder, error)`
+- `GetAll(userID uuid) ([]Reminder, error)`
+- `GetByID(id uuid) (Reminder, error)`
+- `Update(r Reminder) error`
+- `Delete(id uuid) error`
+
+**instance.go**
+- `Create(i ReminderInstance) (ReminderInstance, error)`
+- `GetPending(now time.Time) ([]ReminderInstance, error)` — `scheduled_at <= now AND status = pending`
+- `GetActiveByUser(userID uuid) ([]ReminderInstance, error)` — fallback для done без reply
+- `GetByMessageID(messageID int) (ReminderInstance, error)` — привязка reply
+- `GetLastByReminder(reminderID uuid, timeIndex int) (ReminderInstance, error)` — для рескедулера
+- `SetStatus(id uuid, status string) error`
+- `SetDoneAt(id uuid, t time.Time) error`
+- `AddMessageID(id uuid, messageID int) error`
+
+### Бизнес-логика (domain)
+
+**scheduler.go** — главный loop, `time.Ticker` каждую секунду:
+1. Загрузить все pending instances где `scheduled_at <= now`
+2. Для каждого — отправить напоминание (или повтор), добавить `message_id`
+3. Проверить нужен ли сброс дня: для каждого юзера если текущее время = 03:00 по его timezone и `last_reset_at` был вчера → запустить `DailyReset`
+
+**reminder.go**
+- `DailyReset(userID uuid)` — создать первый Instance для каждого `daily` Reminder
+- `NextInstance(instance ReminderInstance)` — после закрытия Instance: взять следующий `time_index`, применить рескедулер, создать новый Instance
+- `Reschedule(reminder Reminder, doneAt time.Time, fromIndex int) []time.Time` — пересчёт времён серии
+
+### Интеграция с Telegram (bot)
+
+**handler.go** — роутинг:
+- Команды (`/start`, `/add`, ...) → `commands.go`
+- Текстовые сообщения (`done`, `ok`, `+`, `done HH:MM`) → парсинг + `domain`
+- Reply → извлечь `reply_to_message_id` → найти Instance → подтвердить
+
+---
+
+## План разработки
+
+Реализация снизу вверх: `store → domain → bot`. Каждая фаза даёт что-то реально работающее.
+
+### Фаза 1 · store
+- Схема БД, миграции
+- CRUD: User, Reminder, ReminderInstance
+- Юнит тесты с реальным SQLite in-memory
+
+**Результат:** данные сохраняются и читаются корректно.
+
+### Фаза 2 · domain · базовый сценарий
+- `DailyReset` — создаёт первый Instance для каждого `daily` Reminder
+- scheduler loop (`time.Ticker` 1/сек) — находит pending instances
+- `NextInstance` — после закрытия создаёт следующий в цепочке
+- Рескедулер пока не реализуем
+
+**Результат:** цепочка Instance живёт и переключается сама по себе.
+
+### Фаза 3 · bot · минимальный живой бот
+- `/start` + запрос timezone
+- `/add` простой (одно время, без серии)
+- `done` — reply и fallback на последний активный Instance
+
+**Результат:** полностью рабочий бот для одного напоминания. Можно реально пользоваться.
+
+### Фаза 4 · серии и рескедулер
+- `/add` с несколькими временами и `gap`
+- `Reschedule` логика в domain
+- Предупреждение если последний Instance выходит за день
+
+**Результат:** полный сценарий с серией напоминаний и автоматическим пересчётом.
+
+### Фаза 5 · полный бот
+- `/schedule`, `/list`, `/skip`, `/snooze`, `/pause`, `/delete`
+- `done HH:MM` с подтверждением если время в прошлом
+- Оставшиеся corner cases
+
+**Результат:** полный бот согласно спецификации.
