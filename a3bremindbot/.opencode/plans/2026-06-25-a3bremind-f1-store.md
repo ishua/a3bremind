@@ -41,8 +41,7 @@
   - `GetActiveByUser(userID string) ([]ReminderInstance, error)` — fallback для done без reply
   - `GetByMessageID(messageID int) (ReminderInstance, error)` — привязка reply
   - `GetLastByReminder(reminderID string, timeIndex int) (ReminderInstance, error)` — для рескедулера
-  - `SetStatus(id string, status string) error` — обновляет `updated_at`
-  - `SetDoneAt(id string, t time.Time) error` — обновляет `updated_at`
+  - `SetStatus(id string, status string) error` — если status="done", также проставляет done_at=now; обновляет updated_at
   - `AddMessageID(id string, messageID int) error` — аппендит message_id через json_set, атомарно; обновляет `updated_at`
 - [x] 1.6 Юнит-тесты с SQLite in-memory
   - табличные тесты на каждую CRUD-операцию
@@ -70,7 +69,7 @@
 - **updated_at**: на Reminder и ReminderInstance — обновляется при любом изменении, помогает при отладке и истории
 - **GetOrCreate**: семантика upsert через `INSERT OR IGNORE` + `SELECT`, возвращает существующего пользователя без ошибки
 - **AddMessageID**: атомарна через SQLite json_set(message_ids, '$[#]', ?). Конкурентный доступ безопасен.
-- **GetByID для Instance**: добавлен — domain-слою нужно закрывать Instance по id
+- **SetStatus**: если status="done", Go-код добавляет `done_at = ?` в UPDATE. Отдельный `SetDoneAt` удалён — не нужен.
 
 ## Открытые вопросы
 
@@ -157,8 +156,7 @@ type ReminderInstance struct {
 - GetActiveByUser(userID string) ([]ReminderInstance, error)  — status='pending', для fallback done
 - GetByMessageID(messageID int) (ReminderInstance, error)
 - GetLastByReminder(reminderID string, timeIndex int) (ReminderInstance, error)
-- SetStatus(id string, status string) error
-- SetDoneAt(id string, t time.Time) error
+- SetStatus(id string, status string) error — если status="done", также проставляет done_at=now
 - AddMessageID(id string, messageID int) error  — атомарный аппенд через json_set
 
 ## Схема БД (automigration в InitDB через CREATE TABLE IF NOT EXISTS)

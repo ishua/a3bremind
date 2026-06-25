@@ -136,23 +136,23 @@ func GetLastByReminder(db *sql.DB, reminderID string, timeIndex int) (ReminderIn
 }
 
 // SetStatus updates the status of a reminder instance.
+// If status is "done", done_at is also set to the current time.
 func SetStatus(db *sql.DB, id string, status string) error {
-	const query = `UPDATE reminder_instances SET status = ?, updated_at = ? WHERE id = ?`
 	now := time.Now().Unix()
-	res, err := db.Exec(query, status, now, id)
+
+	var query string
+	var args []any
+	if status == "done" {
+		query = `UPDATE reminder_instances SET status = ?, done_at = ?, updated_at = ? WHERE id = ?`
+		args = []any{status, now, now, id}
+	} else {
+		query = `UPDATE reminder_instances SET status = ?, updated_at = ? WHERE id = ?`
+		args = []any{status, now, id}
+	}
+
+	res, err := db.Exec(query, args...)
 	if err != nil {
 		return fmt.Errorf("set status: %w", err)
-	}
-	return checkRowsAffected(res, "reminder_instance", id)
-}
-
-// SetDoneAt sets the done_at timestamp of a reminder instance.
-func SetDoneAt(db *sql.DB, id string, t time.Time) error {
-	const query = `UPDATE reminder_instances SET done_at = ?, updated_at = ? WHERE id = ?`
-	now := time.Now().Unix()
-	res, err := db.Exec(query, t.Unix(), now, id)
-	if err != nil {
-		return fmt.Errorf("set done_at: %w", err)
 	}
 	return checkRowsAffected(res, "reminder_instance", id)
 }

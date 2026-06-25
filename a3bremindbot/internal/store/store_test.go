@@ -511,37 +511,6 @@ func TestSetStatus_NotFound(t *testing.T) {
 	assert.ErrorContains(t, err, "not found")
 }
 
-func TestSetDoneAt(t *testing.T) {
-	db := newTestDB(t)
-
-	u, _ := GetOrCreate(db, 29)
-	r, _ := Create(db, Reminder{UserID: u.ID, Label: "DoneAt test", Times: []string{"09:00"}, Repeat: "daily"})
-	inst, _ := CreateInstance(db, ReminderInstance{ReminderID: r.ID, TimeIndex: 0, ScheduledAt: time.Now(), Status: "pending"})
-
-	// Read from DB to get the exact stored updated_at.
-	gotBefore, err := GetInstanceByID(db, inst.ID)
-	require.NoError(t, err)
-	originalUpdatedAt := gotBefore.UpdatedAt
-	time.Sleep(10 * time.Millisecond)
-
-	doneTime := time.Now().Truncate(time.Second)
-	err = SetDoneAt(db, inst.ID, doneTime)
-	require.NoError(t, err)
-
-	got, err := GetInstanceByID(db, inst.ID)
-	require.NoError(t, err)
-	require.NotNil(t, got.DoneAt)
-	assert.Equal(t, doneTime.Unix(), got.DoneAt.Unix())
-	assert.GreaterOrEqual(t, got.UpdatedAt.Unix(), originalUpdatedAt.Unix(),
-		"updated_at should be >= original")
-}
-
-func TestSetDoneAt_NotFound(t *testing.T) {
-	db := newTestDB(t)
-	err := SetDoneAt(db, "nonexistent", time.Now())
-	assert.ErrorContains(t, err, "not found")
-}
-
 func TestAddMessageID(t *testing.T) {
 	db := newTestDB(t)
 
