@@ -10,7 +10,7 @@ import (
 	"github.com/a3bremind/a3bremindbot/internal/store"
 )
 
-// handleDone обрабатывает done/ok/+ с reply или с fallback на последний активный Instance.
+// handleDone обрабатывает done/ok/+ — работает только с reply на уведомление бота.
 func (h *Handler) handleDone(update tgbotapi.Update) {
 	user, err := store.GetOrCreate(h.db, update.Message.Chat.ID)
 	if err != nil {
@@ -18,26 +18,22 @@ func (h *Handler) handleDone(update tgbotapi.Update) {
 		return
 	}
 
-	var instance store.ReminderInstance
+	if update.Message.ReplyToMessage == nil {
+		h.sendText(update.Message.Chat.ID, "Используй reply на уведомление бота, или /done <uuid> для конкретного напоминания.")
+		return
+	}
 
-	if update.Message.ReplyToMessage != nil {
-		// С reply: ищем Instance по message_id
-		replyMsgID := update.Message.ReplyToMessage.MessageID
-		inst, err := store.GetInstanceByMessageID(h.db, replyMsgID)
-		if err != nil {
-			h.sendText(update.Message.Chat.ID, "Не удалось найти напоминание")
-			return
-		}
-		instance = inst
-	} else {
-		// Без reply: fallback к последнему активному
-		active, err := store.GetActiveByUser(h.db, user.ID)
-		if err != nil || len(active) == 0 {
-			h.sendText(update.Message.Chat.ID, "Нет активных напоминаний")
-			return
-		}
-		// Берём последний по scheduled_at
-		instance = active[len(active)-1]
+	replyMsgID := update.Message.ReplyToMessage.MessageID
+	instanceID, err := store.GetInstanceIDByReply(h.db, replyMsgID)
+	if err != nil {
+		h.sendText(update.Message.Chat.ID, "Не удалось найти напоминание")
+		return
+	}
+
+	instance, err := store.GetInstanceByID(h.db, instanceID)
+	if err != nil {
+		h.sendText(update.Message.Chat.ID, "Не удалось найти напоминание")
+		return
 	}
 
 	// Проверяем статус

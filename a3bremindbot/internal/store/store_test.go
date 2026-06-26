@@ -689,6 +689,43 @@ func TestEmptyTimesJSON(t *testing.T) {
 	assert.Empty(t, got.Times)
 }
 
+// ---------------------------------------------------------------------------
+// Instance reply tests
+// ---------------------------------------------------------------------------
+
+func TestInsertInstanceReplyAndGet(t *testing.T) {
+	db := newTestDB(t)
+
+	err := InsertInstanceReply(db, 42, "instance-1")
+	require.NoError(t, err)
+
+	got, err := GetInstanceIDByReply(db, 42)
+	require.NoError(t, err)
+	assert.Equal(t, "instance-1", got)
+}
+
+func TestInsertInstanceReply_Overwrite(t *testing.T) {
+	db := newTestDB(t)
+
+	// Insert, then overwrite with new instance ID.
+	err := InsertInstanceReply(db, 42, "instance-1")
+	require.NoError(t, err)
+
+	err = InsertInstanceReply(db, 42, "instance-2")
+	require.NoError(t, err)
+
+	got, err := GetInstanceIDByReply(db, 42)
+	require.NoError(t, err)
+	assert.Equal(t, "instance-2", got)
+}
+
+func TestGetInstanceIDByReply_NotFound(t *testing.T) {
+	db := newTestDB(t)
+
+	_, err := GetInstanceIDByReply(db, 999)
+	assert.ErrorContains(t, err, "not found")
+}
+
 func TestDuplicateTelegramIDReturnsExisting(t *testing.T) {
 	db := newTestDB(t)
 

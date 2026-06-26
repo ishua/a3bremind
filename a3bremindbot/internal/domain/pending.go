@@ -78,6 +78,12 @@ func (s *Scheduler) processInstance(inst store.ReminderInstance, now time.Time) 
 		return
 	}
 
+	// Record the reply mapping (reply_message_id -> instance_id).
+	if err := store.InsertInstanceReply(s.db, messageID, inst.ID); err != nil {
+		slog.Error("insert instance reply", "message_id", messageID, "instance_id", inst.ID, "error", err)
+		return
+	}
+
 	// Record the sent message.
 	if msgCount+1 >= RepeatCount {
 		// Last notification — atomically add message ID and mark as missed.

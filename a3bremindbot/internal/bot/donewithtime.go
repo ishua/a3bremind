@@ -50,31 +50,30 @@ func (h *Handler) handleDoneWithTime(update tgbotapi.Update) {
 		return
 	}
 
-	// doneAt в прошлом — находим Instance
-	var instance store.ReminderInstance
-	if update.Message.ReplyToMessage != nil {
-		// С reply: ищем Instance по message_id
-		replyMsgID := update.Message.ReplyToMessage.MessageID
-		inst, err := store.GetInstanceByMessageID(h.db, replyMsgID)
-		if err != nil {
-			h.sendText(update.Message.Chat.ID, "Не удалось найти напоминание")
-			return
-		}
-		// Проверяем, что Instance принадлежит пользователю
-		remind, err := store.GetByID(h.db, inst.ReminderID)
-		if err != nil || remind.UserID != user.ID {
-			h.sendText(update.Message.Chat.ID, "Не удалось найти напоминание")
-			return
-		}
-		instance = inst
-	} else {
-		// Без reply: fallback к последнему активному
-		active, err := store.GetActiveByUser(h.db, user.ID)
-		if err != nil || len(active) == 0 {
-			h.sendText(update.Message.Chat.ID, "Нет активных напоминаний")
-			return
-		}
-		instance = active[len(active)-1]
+	// doneAt в прошлом — находим Instance по reply
+	if update.Message.ReplyToMessage == nil {
+		h.sendText(update.Message.Chat.ID, "Используй reply на уведомление бота, или /done <uuid> HH:MM для конкретного напоминания.")
+		return
+	}
+
+	replyMsgID := update.Message.ReplyToMessage.MessageID
+	instanceID, err := store.GetInstanceIDByReply(h.db, replyMsgID)
+	if err != nil {
+		h.sendText(update.Message.Chat.ID, "Не удалось найти напоминание")
+		return
+	}
+
+	instance, err := store.GetInstanceByID(h.db, instanceID)
+	if err != nil {
+		h.sendText(update.Message.Chat.ID, "Не удалось найти напоминание")
+		return
+	}
+
+	// Проверяем, что Instance принадлежит пользователю
+	remind, err := store.GetByID(h.db, instance.ReminderID)
+	if err != nil || remind.UserID != user.ID {
+		h.sendText(update.Message.Chat.ID, "Не удалось найти напоминание")
+		return
 	}
 
 	// Сохраняем в pendingConfirm

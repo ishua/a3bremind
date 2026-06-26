@@ -165,6 +165,9 @@ func TestHandleDone_RescheduleWarning(t *testing.T) {
 	err = store.AddMessageID(db, inst.ID, 100, time.Now())
 	require.NoError(t, err)
 
+	err = store.InsertInstanceReply(db, 100, inst.ID)
+	require.NoError(t, err)
+
 	upd := tgbotapi.Update{
 		Message: &tgbotapi.Message{
 			Text: "done",
@@ -225,6 +228,9 @@ func TestHandleDone_RescheduleNotification(t *testing.T) {
 	err = store.AddMessageID(db, inst.ID, 200, doneAt)
 	require.NoError(t, err)
 
+	err = store.InsertInstanceReply(db, 200, inst.ID)
+	require.NoError(t, err)
+
 	upd := tgbotapi.Update{
 		Message: &tgbotapi.Message{
 			Text: "done",
@@ -280,6 +286,9 @@ func TestHandleDone_NoRescheduleNotification(t *testing.T) {
 	require.NoError(t, err)
 
 	err = store.AddMessageID(db, inst.ID, 300, time.Now())
+	require.NoError(t, err)
+
+	err = store.InsertInstanceReply(db, 300, inst.ID)
 	require.NoError(t, err)
 
 	upd := tgbotapi.Update{
@@ -487,6 +496,10 @@ func TestHandleDone_Reply(t *testing.T) {
 	err = store.AddMessageID(db, inst.ID, 100, time.Now())
 	require.NoError(t, err)
 
+	// Insert reply mapping (as scheduler would).
+	err = store.InsertInstanceReply(db, 100, inst.ID)
+	require.NoError(t, err)
+
 	upd := tgbotapi.Update{
 		Message: &tgbotapi.Message{
 			Text: "done",
@@ -540,6 +553,9 @@ func TestHandleDone_NextInstanceCreated(t *testing.T) {
 	err = store.AddMessageID(db, inst.ID, 100, time.Now())
 	require.NoError(t, err)
 
+	err = store.InsertInstanceReply(db, 100, inst.ID)
+	require.NoError(t, err)
+
 	upd := tgbotapi.Update{
 		Message: &tgbotapi.Message{
 			Text: "done",
@@ -561,36 +577,14 @@ func TestHandleDone_NextInstanceCreated(t *testing.T) {
 }
 
 func TestHandleDone_NoReplyFallback(t *testing.T) {
-	db, mock, h := setup(t)
+	_, mock, h := setup(t)
 
-	user, err := store.GetOrCreate(db, 12345)
-	require.NoError(t, err)
-	err = store.SetTimezone(db, user.ID, "UTC")
-	require.NoError(t, err)
-
-	r, err := store.Create(db, store.Reminder{
-		UserID: user.ID,
-		Label:  "Fallback test",
-		Times:  []string{"09:00"},
-		Repeat: "daily",
-	})
-	require.NoError(t, err)
-
-	_, err = store.CreateInstance(db, store.ReminderInstance{
-		ReminderID:  r.ID,
-		ForDate:     time.Now(),
-		TimeIndex:   0,
-		ScheduledAt: time.Now().Add(-1 * time.Hour),
-		Status:      "pending",
-	})
-	require.NoError(t, err)
-
+	// Without reply, done should tell the user to use reply or /done <uuid>.
 	upd := updateWithText("done")
 	h.HandleUpdate(upd)
 
 	text := mock.LastText()
-	assert.Contains(t, text, "✅")
-	assert.Contains(t, text, "Fallback test")
+	assert.Contains(t, text, "Используй reply")
 }
 
 func TestHandleDone_NoActive(t *testing.T) {
@@ -600,7 +594,7 @@ func TestHandleDone_NoActive(t *testing.T) {
 	h.HandleUpdate(upd)
 
 	text := mock.LastText()
-	assert.Contains(t, text, "Нет активных напоминаний")
+	assert.Contains(t, text, "Используй reply")
 }
 
 func TestHandleDone_AlreadyDone(t *testing.T) {
@@ -627,6 +621,9 @@ func TestHandleDone_AlreadyDone(t *testing.T) {
 	require.NoError(t, err)
 
 	err = store.AddMessageID(db, inst.ID, 200, time.Now())
+	require.NoError(t, err)
+
+	err = store.InsertInstanceReply(db, 200, inst.ID)
 	require.NoError(t, err)
 
 	upd := tgbotapi.Update{
@@ -674,6 +671,9 @@ func TestHandleDone_OkSynonym(t *testing.T) {
 	err = store.AddMessageID(db, inst.ID, 300, time.Now())
 	require.NoError(t, err)
 
+	err = store.InsertInstanceReply(db, 300, inst.ID)
+	require.NoError(t, err)
+
 	upd := tgbotapi.Update{
 		Message: &tgbotapi.Message{
 			Text: "ok",
@@ -717,6 +717,9 @@ func TestHandleDone_PlusSynonym(t *testing.T) {
 	require.NoError(t, err)
 
 	err = store.AddMessageID(db, inst.ID, 400, time.Now())
+	require.NoError(t, err)
+
+	err = store.InsertInstanceReply(db, 400, inst.ID)
 	require.NoError(t, err)
 
 	upd := tgbotapi.Update{
@@ -1234,6 +1237,9 @@ func TestHandleDone_WhilePaused(t *testing.T) {
 	err = store.AddMessageID(db, inst.ID, 500, time.Now())
 	require.NoError(t, err)
 
+	err = store.InsertInstanceReply(db, 500, inst.ID)
+	require.NoError(t, err)
+
 	upd := tgbotapi.Update{
 		Message: &tgbotapi.Message{
 			Text: "done",
@@ -1276,16 +1282,32 @@ func TestHandleDone_WithTime_Past(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	store.CreateInstance(db, store.ReminderInstance{
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
 		ForDate:     time.Now(),
 		TimeIndex:   0,
 		ScheduledAt: time.Now().Add(-2 * time.Hour),
 		Status:      "pending",
 	})
+	require.NoError(t, err)
 
-	// "done 06:30" which is in the past
-	upd := updateWithText("done 06:30")
+	err = store.AddMessageID(db, inst.ID, 101, time.Now())
+	require.NoError(t, err)
+
+	err = store.InsertInstanceReply(db, 101, inst.ID)
+	require.NoError(t, err)
+
+	// Reply with "done 06:30"
+	upd := tgbotapi.Update{
+		Message: &tgbotapi.Message{
+			Text: "done 06:30",
+			Chat: &tgbotapi.Chat{ID: 12345},
+			From: &tgbotapi.User{ID: 12345},
+			ReplyToMessage: &tgbotapi.Message{
+				MessageID: 101,
+			},
+		},
+	}
 	h.HandleUpdate(upd)
 
 	text := mock.LastText()
@@ -1319,8 +1341,23 @@ func TestHandleDone_TimeConfirm_Yes(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// First: done HH:MM to set up pending confirm
-	upd1 := updateWithText("done 06:30")
+	err = store.AddMessageID(db, inst.ID, 102, time.Now())
+	require.NoError(t, err)
+
+	err = store.InsertInstanceReply(db, 102, inst.ID)
+	require.NoError(t, err)
+
+	// First: done HH:MM with reply to set up pending confirm
+	upd1 := tgbotapi.Update{
+		Message: &tgbotapi.Message{
+			Text: "done 06:30",
+			Chat: &tgbotapi.Chat{ID: 12345},
+			From: &tgbotapi.User{ID: 12345},
+			ReplyToMessage: &tgbotapi.Message{
+				MessageID: 102,
+			},
+		},
+	}
 	h.HandleUpdate(upd1)
 
 	// Now: confirm with "+"
@@ -1362,17 +1399,33 @@ func TestHandleDone_WithTime_Future(t *testing.T) {
 		Times:  []string{"09:00"},
 		Repeat: "daily",
 	})
-	store.CreateInstance(db, store.ReminderInstance{
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
 		ForDate:     time.Now(),
 		TimeIndex:   0,
 		ScheduledAt: time.Now().Add(-2 * time.Hour),
 		Status:      "pending",
 	})
+	require.NoError(t, err)
+
+	err = store.AddMessageID(db, inst.ID, 103, time.Now())
+	require.NoError(t, err)
+
+	err = store.InsertInstanceReply(db, 103, inst.ID)
+	require.NoError(t, err)
 
 	// A time 1 hour in the future
 	futureTime := time.Now().In(time.UTC).Add(1 * time.Hour).Format("15:04")
-	upd := updateWithText("done " + futureTime)
+	upd := tgbotapi.Update{
+		Message: &tgbotapi.Message{
+			Text: "done " + futureTime,
+			Chat: &tgbotapi.Chat{ID: 12345},
+			From: &tgbotapi.User{ID: 12345},
+			ReplyToMessage: &tgbotapi.Message{
+				MessageID: 103,
+			},
+		},
+	}
 	h.HandleUpdate(upd)
 
 	text := mock.LastText()
@@ -1383,12 +1436,12 @@ func TestHandleDone_WithTime_NoConfirm(t *testing.T) {
 	_, mock, h := setup(t)
 
 	// Just "+" without any pending confirm → should be treated as normal done
-	// Since there are no active instances, should say "Нет активных напоминаний"
+	// Without reply, should say to use reply or /done <uuid>
 	upd := updateWithText("+")
 	h.HandleUpdate(upd)
 
 	text := mock.LastText()
-	assert.Contains(t, text, "Нет активных напоминаний")
+	assert.Contains(t, text, "Используй reply")
 }
 
 func TestHandleDelete(t *testing.T) {
@@ -1525,6 +1578,9 @@ func TestHandleDone_WithTime_Reply(t *testing.T) {
 
 	// Add a message ID to inst1 so we can reply to it
 	err = store.AddMessageID(db, inst1.ID, 100, time.Now())
+	require.NoError(t, err)
+
+	err = store.InsertInstanceReply(db, 100, inst1.ID)
 	require.NoError(t, err)
 
 	// Reply to the first instance's message with "done 06:30"

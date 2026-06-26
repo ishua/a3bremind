@@ -63,6 +63,11 @@ func migrate(db *sql.DB) error {
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS instance_replies (
+			reply_message_id INTEGER PRIMARY KEY,
+			instance_id TEXT NOT NULL,
+			created_at INTEGER NOT NULL
+		)`,
 	}
 
 	for _, stmt := range statements {
@@ -76,6 +81,7 @@ func migrate(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_instances_reminder_id ON reminder_instances(reminder_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_instances_scheduled_at_status ON reminder_instances(scheduled_at, status)`,
 		`CREATE INDEX IF NOT EXISTS idx_instances_reminder_for_date ON reminder_instances(reminder_id, for_date)`,
+		`CREATE INDEX IF NOT EXISTS idx_instance_replies_message_id ON instance_replies(reply_message_id)`,
 	}
 	for _, stmt := range indexStatements {
 		if _, err := db.Exec(stmt); err != nil {
