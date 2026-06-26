@@ -3,4 +3,7 @@ services:
     image: a3bremindbot:latest
     environment:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - DB_PATH=/data/bot.db
+    volumes:
+      - ./data:/data
     restart: unless-stopped

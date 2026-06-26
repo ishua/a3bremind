@@ -600,6 +600,58 @@ func TestAddMessageID_NotFound(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// AddMessageIDAndMarkMissedDeleteOnce tests
+// ---------------------------------------------------------------------------
+
+func TestAddMessageIDAndMarkMissedDeleteOnce_HappyPath(t *testing.T) {
+	db := newTestDB(t)
+
+	u, _ := GetOrCreate(db, 110)
+	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Once atomic", Times: []string{"09:00"}, Repeat: "once"})
+	inst, _ := CreateInstance(db, ReminderInstance{ReminderID: r.ID, TimeIndex: 0, ScheduledAt: time.Now(), Status: "pending"})
+
+	now := time.Now()
+
+	// Call the new atomic function.
+	err := AddMessageIDAndMarkMissedDeleteOnce(db, inst.ID, r.ID, 42, now)
+	require.NoError(t, err)
+
+	// Instance should be gone (deleted).
+	_, err = GetInstanceByID(db, inst.ID)
+	assert.ErrorContains(t, err, "not found")
+
+	// Reminder should be gone.
+	_, err = GetByID(db, r.ID)
+	assert.ErrorContains(t, err, "not found")
+}
+
+func TestAddMessageIDAndMarkMissedDeleteOnce_AlreadyDone(t *testing.T) {
+	db := newTestDB(t)
+
+	u, _ := GetOrCreate(db, 111)
+	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Once atomic already done", Times: []string{"09:00"}, Repeat: "once"})
+	inst, _ := CreateInstance(db, ReminderInstance{ReminderID: r.ID, TimeIndex: 0, ScheduledAt: time.Now(), Status: "pending"})
+
+	// Done handler runs first.
+	err := SetStatus(db, inst.ID, "done")
+	require.NoError(t, err)
+
+	// Now scheduler calls the atomic function — should be a no-op.
+	err = AddMessageIDAndMarkMissedDeleteOnce(db, inst.ID, r.ID, 42, time.Now())
+	require.NoError(t, err)
+
+	// Instance should still exist with "done".
+	got, err := GetInstanceByID(db, inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "done", got.Status)
+
+	// Reminder should still exist.
+	reminder, err := GetByID(db, r.ID)
+	require.NoError(t, err)
+	assert.Equal(t, r.ID, reminder.ID)
+}
+
+// ---------------------------------------------------------------------------
 // Edge cases
 // ---------------------------------------------------------------------------
 

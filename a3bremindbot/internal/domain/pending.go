@@ -76,12 +76,9 @@ func (s *Scheduler) processInstance(inst store.ReminderInstance, now time.Time) 
 	if msgCount+1 >= RepeatCount {
 		// Last notification — atomically add message ID and mark as missed.
 		if reminder.Repeat == "once" {
-			if err := store.AddMessageID(s.db, inst.ID, messageID, sentAt); err != nil {
-				slog.Error("add message id", "instance_id", inst.ID, "error", err)
+			if err := store.AddMessageIDAndMarkMissedDeleteOnce(s.db, inst.ID, reminder.ID, messageID, sentAt); err != nil {
+				slog.Error("add message id and mark missed delete once", "instance_id", inst.ID, "error", err)
 				return
-			}
-			if err := store.MarkMissedAndDeleteOnce(s.db, inst.ID, reminder.ID); err != nil {
-				slog.Error("mark missed and delete once reminder", "reminder_id", reminder.ID, "error", err)
 			}
 		} else {
 			if err := store.AddMessageIDAndSetMissed(s.db, inst.ID, messageID, sentAt); err != nil {

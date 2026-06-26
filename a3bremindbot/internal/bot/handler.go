@@ -2,6 +2,7 @@ package bot
 
 import (
 	"database/sql"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -125,5 +126,7 @@ func (h *Handler) handleCommand(update tgbotapi.Update, text string) {
 // sendText отправляет простое текстовое сообщение.
 func (h *Handler) sendText(chatID int64, text string) {
 	msg := tgbotapi.NewMessage(chatID, text)
-	h.bot.Send(msg)
+	if _, err := h.bot.Send(msg); err != nil {
+		slog.Error("failed to send telegram message", "chat_id", chatID, "error", err)
+	}
 }

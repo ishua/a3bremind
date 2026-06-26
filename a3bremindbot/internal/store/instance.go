@@ -289,6 +289,58 @@ func AddMessageID(db Querier, id string, messageID int, sentAt time.Time) error 
 	return checkRowsAffected(res, "reminder_instance", id)
 }
 
+// AddMessageIDAndMarkMissedDeleteOnce atomically adds a message ID, marks the instance as missed,
+// and deletes the reminder (all instances + reminder row) in a single transaction.
+// Intended for once-reminders to prevent race conditions between the scheduler and the done handler.
+func AddMessageIDAndMarkMissedDeleteOnce(db *sql.DB, instanceID, reminderID string, messageID int, sentAt time.Time) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Add message ID and set missed atomically, only if still pending.
+	entry := MessageIDEntry{MessageID: messageID, SentAt: sentAt.Unix()}
+	entryJSON, err := json.Marshal(entry)
+	if err != nil {
+		return fmt.Errorf("marshal message_id entry: %w", err)
+	}
+
+	now := time.Now().Unix()
+	res, err := tx.Exec(`UPDATE reminder_instances SET message_ids = json_set(message_ids, '$[#]', json(?)), status = 'missed', updated_at = ? WHERE id = ? AND status = 'pending'`, string(entryJSON), now, instanceID)
+	if err != nil {
+		return fmt.Errorf("add message and set missed: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		// Already handled by done handler — skip.
+		return nil
+	}
+
+	// Delete all instances for this reminder.
+	if _, err := tx.Exec(`DELETE FROM reminder_instances WHERE reminder_id = ?`, reminderID); err != nil {
+		return fmt.Errorf("delete reminder instances: %w", err)
+	}
+
+	// Delete the reminder itself.
+	res, err = tx.Exec(`DELETE FROM reminders WHERE id = ?`, reminderID)
+	if err != nil {
+		return fmt.Errorf("delete reminder: %w", err)
+	}
+	n, err = res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("reminder %q not found", reminderID)
+	}
+
+	return tx.Commit()
+}
+
 // AddMessageIDAndSetMissed atomically adds a message ID and marks the instance as missed.
 // This prevents races between the scheduler and the done handler.
 func AddMessageIDAndSetMissed(db *sql.DB, instanceID string, messageID int, sentAt time.Time) error {

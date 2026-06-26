@@ -17,7 +17,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	db, err := store.InitDB("sqlite", "bot.db")
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = "bot.db"
+	}
+	db, err := store.InitDB("sqlite", dbPath)
 	if err != nil {
 		slog.Error("init db", "error", err)
 		os.Exit(1)

@@ -32,14 +32,22 @@ func (h *Handler) handleSkip(update tgbotapi.Update) {
 		return
 	}
 
+	// SetStatus("skipped") + GetInstanceByID + NextInstance в одной транзакции
+	tx, err := h.db.Begin()
+	if err != nil {
+		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
+		return
+	}
+	defer tx.Rollback()
+
 	// SetStatus("skipped") — не проставляет done_at
-	if err := store.SetStatus(h.db, instance.ID, "skipped"); err != nil {
+	if err := store.SetStatus(tx, instance.ID, "skipped"); err != nil {
 		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
 		return
 	}
 
 	// Перечитываем instance (DoneAt будет nil для skipped)
-	updated, err := store.GetInstanceByID(h.db, instance.ID)
+	updated, err := store.GetInstanceByID(tx, instance.ID)
 	if err != nil {
 		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
 		return
@@ -47,8 +55,13 @@ func (h *Handler) handleSkip(update tgbotapi.Update) {
 
 	// NextInstance: создаёт следующий в цепочке, если есть
 	// DoneAt == nil → рескедул не применяется, это правильно для skip
-	_, err = domain.NextInstance(h.db, updated, time.Now())
+	_, err = domain.NextInstance(tx, updated, time.Now())
 	if err != nil {
+		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
 		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
 		return
 	}

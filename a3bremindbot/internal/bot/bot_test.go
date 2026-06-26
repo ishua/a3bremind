@@ -1391,3 +1391,84 @@ func TestHandleDelete_WrongUser(t *testing.T) {
 	_, err = store.GetByID(db, r.ID)
 	require.NoError(t, err)
 }
+
+func TestHandleDone_WithTime_Reply(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Reply time",
+		Times:  []string{"09:00", "12:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	// Create two pending instances — the first one is not the last active
+	inst1, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   0,
+		ScheduledAt: time.Now().Add(-2 * time.Hour),
+		Status:      "pending",
+	})
+	require.NoError(t, err)
+
+	inst2, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   1,
+		ScheduledAt: time.Now().Add(-1 * time.Hour),
+		Status:      "pending",
+	})
+	require.NoError(t, err)
+
+	// Add a message ID to inst1 so we can reply to it
+	err = store.AddMessageID(db, inst1.ID, 100, time.Now())
+	require.NoError(t, err)
+
+	// Reply to the first instance's message with "done 06:30"
+	upd := tgbotapi.Update{
+		Message: &tgbotapi.Message{
+			Text: "done 06:30",
+			Chat: &tgbotapi.Chat{ID: 12345},
+			From: &tgbotapi.User{ID: 12345},
+			ReplyToMessage: &tgbotapi.Message{
+				MessageID: 100,
+			},
+		},
+	}
+
+	h.HandleUpdate(upd)
+
+	// Should ask for confirmation with the first instance
+	text := mock.LastText()
+	assert.Contains(t, text, "Записать")
+	assert.Contains(t, text, "06:30")
+
+	// Confirm
+	upd2 := tgbotapi.Update{
+		Message: &tgbotapi.Message{
+			Text: "+",
+			Chat: &tgbotapi.Chat{ID: 12345},
+			From: &tgbotapi.User{ID: 12345},
+		},
+	}
+	h.HandleUpdate(upd2)
+
+	text = mock.LastText()
+	assert.Contains(t, text, "✅")
+	assert.Contains(t, text, "Reply time")
+
+	// inst1 should be done with done_at = 06:30
+	got, err := store.GetInstanceByID(db, inst1.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "done", got.Status)
+
+	// inst2 should still be pending (not the one we replied to)
+	got2, err := store.GetInstanceByID(db, inst2.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "pending", got2.Status)
+}
