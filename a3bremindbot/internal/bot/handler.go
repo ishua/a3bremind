@@ -118,6 +118,8 @@ func (h *Handler) handleCommand(update tgbotapi.Update, text string) {
 		h.handleResume(update)
 	case strings.HasPrefix(text, "/delete"):
 		h.handleDelete(update)
+	case strings.HasPrefix(text, "/help"):
+		h.handleHelp(update)
 	default:
 		h.sendText(update.Message.Chat.ID, "Неизвестная команда")
 	}
