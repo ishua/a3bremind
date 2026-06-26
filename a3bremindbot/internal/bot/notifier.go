@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/a3bremind/a3bremindbot/internal/domain"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // Notifier реализует scheduler.Notifier через Telegram Bot API.
@@ -18,10 +18,22 @@ func NewNotifier(bot BotAPI) *Notifier {
 	return &Notifier{bot: bot}
 }
 
-// Notify отправляет структурированное уведомление пользователю через Telegram.
+// Notify отправляет структурированное уведомление пользователю через Telegram
+// с inline-кнопками ✅ Done / ⏰ Snooze / ⏭ Skip.
 func (n *Notifier) Notify(recipientID int64, notification domain.Notification) (int, time.Time, error) {
 	text := formatNotificationText(notification)
 	msg := tgbotapi.NewMessage(recipientID, text)
+
+	// Inline-кнопки: Done, Snooze, Skip с callback_data = action:UUID
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("✅ Done", "done:"+notification.InstanceID),
+			tgbotapi.NewInlineKeyboardButtonData("⏰ Snooze", "snooze:"+notification.InstanceID),
+			tgbotapi.NewInlineKeyboardButtonData("⏭ Skip", "skip:"+notification.InstanceID),
+		),
+	)
+	msg.ReplyMarkup = keyboard
+
 	sent, err := n.bot.Send(msg)
 	if err != nil {
 		return 0, time.Time{}, err

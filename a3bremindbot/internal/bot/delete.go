@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/a3bremind/a3bremindbot/internal/store"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // handleDelete обрабатывает /delete <id> — удаляет напоминание и все его Instance.

@@ -1,4 +1,4 @@
-.PHONY: test test-v test-store test-race test-all tag
+.PHONY: test test-v test-store test-race test-all lint tag
 
 # Run all tests with cached results.
 test:
@@ -19,6 +19,10 @@ test-race:
 # Run all tests verbosely with race detection.
 test-all:
 	go test ./... -v -race -count=1
+
+# Run linters.
+lint:
+	golangci-lint run ./...
 
 # Create and push a git tag (usage: make tag v1.2.3).
 tag:

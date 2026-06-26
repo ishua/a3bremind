@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/a3bremind/a3bremindbot/internal/store"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // handleStart обрабатывает /start.
@@ -164,12 +164,12 @@ func parseAddCommand(text string) (label, repeat string, times []string, minGap 
 
 	// Извлекаем label из кавычек
 	if !strings.HasPrefix(rest, "\"") {
-		return "", "", nil, nil, fmt.Errorf("Использование: `/add \"Label\" daily|once [gap:Nh|Nm] HH:MM [HH:MM ...]`")
+		return "", "", nil, nil, fmt.Errorf("использование: `/add \"Label\" daily|once [gap:Nh|Nm] HH:MM [HH:MM ...]`")
 	}
 
 	closeQuote := strings.Index(rest[1:], "\"")
 	if closeQuote == -1 {
-		return "", "", nil, nil, fmt.Errorf("Использование: `/add \"Label\" daily|once [gap:Nh|Nm] HH:MM [HH:MM ...]`")
+		return "", "", nil, nil, fmt.Errorf("использование: `/add \"Label\" daily|once [gap:Nh|Nm] HH:MM [HH:MM ...]`")
 	}
 
 	label = rest[1 : 1+closeQuote]
@@ -178,12 +178,12 @@ func parseAddCommand(text string) (label, repeat string, times []string, minGap 
 	// Разбиваем оставшуюся часть на слова
 	parts := strings.Fields(afterLabel)
 	if len(parts) < 2 {
-		return "", "", nil, nil, fmt.Errorf("Использование: `/add \"Label\" daily|once [gap:Nh|Nm] HH:MM [HH:MM ...]`")
+		return "", "", nil, nil, fmt.Errorf("использование: `/add \"Label\" daily|once [gap:Nh|Nm] HH:MM [HH:MM ...]`")
 	}
 
 	repeat = strings.ToLower(parts[0])
 	if repeat != "daily" && repeat != "once" {
-		return "", "", nil, nil, fmt.Errorf("Режим должен быть `daily` или `once`")
+		return "", "", nil, nil, fmt.Errorf("режим должен быть `daily` или `once`")
 	}
 
 	// Оставшиеся токены после repeat
@@ -197,7 +197,7 @@ func parseAddCommand(text string) (label, repeat string, times []string, minGap 
 			return "", "", nil, nil, gapErr
 		}
 		if gapVal <= 0 {
-			return "", "", nil, nil, fmt.Errorf("Gap должен быть положительным (например, gap:1h или gap:30m)")
+			return "", "", nil, nil, fmt.Errorf("gap должен быть положительным (например, gap:1h или gap:30m)")
 		}
 		minGap = &gapVal
 		tokens = tokens[1:] // убираем gap-токен
@@ -205,12 +205,12 @@ func parseAddCommand(text string) (label, repeat string, times []string, minGap 
 
 	// Оставшиеся токены — это времена HH:MM
 	if len(tokens) == 0 {
-		return "", "", nil, nil, fmt.Errorf("Укажи хотя бы одно время HH:MM (например, 09:00)")
+		return "", "", nil, nil, fmt.Errorf("укажи хотя бы одно время HH:MM (например, 09:00)")
 	}
 
 	for _, t := range tokens {
 		if _, err := time.Parse("15:04", t); err != nil {
-			return "", "", nil, nil, fmt.Errorf("Неверный формат времени: %s. Используй HH:MM (например, 09:00)", t)
+			return "", "", nil, nil, fmt.Errorf("неверный формат времени: %s. Используй HH:MM (например, 09:00)", t)
 		}
 	}
 
@@ -220,7 +220,7 @@ func parseAddCommand(text string) (label, repeat string, times []string, minGap 
 // parseGap парсит строку вида "3h" или "30m" в минуты.
 func parseGap(s string) (int, error) {
 	if len(s) < 2 {
-		return 0, fmt.Errorf("Неверный формат gap. Используй gap:3h или gap:30m")
+		return 0, fmt.Errorf("неверный формат gap. Используй gap:3h или gap:30m")
 	}
 
 	unit := s[len(s)-1]
@@ -228,7 +228,7 @@ func parseGap(s string) (int, error) {
 
 	num, err := strconv.Atoi(numStr)
 	if err != nil {
-		return 0, fmt.Errorf("Неверный формат gap. Используй gap:3h или gap:30m")
+		return 0, fmt.Errorf("неверный формат gap. Используй gap:3h или gap:30m")
 	}
 
 	switch unit {
@@ -237,6 +237,6 @@ func parseGap(s string) (int, error) {
 	case 'm':
 		return num, nil
 	default:
-		return 0, fmt.Errorf("Неверный формат gap. Используй h (часы) или m (минуты)")
+		return 0, fmt.Errorf("неверный формат gap. Используй h (часы) или m (минуты)")
 	}
 }

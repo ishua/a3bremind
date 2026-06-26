@@ -5,9 +5,9 @@ import (
 	"strings"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/a3bremind/a3bremindbot/internal/domain"
 	"github.com/a3bremind/a3bremindbot/internal/store"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // handleDone обрабатывает done/ok/+ — работает только с reply на уведомление бота.
@@ -55,7 +55,7 @@ func (h *Handler) handleDone(update tgbotapi.Update) {
 		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
 		return
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // deferred rollback is idiomatic
 
 	if err := store.SetStatus(tx, instance.ID, "done"); err != nil {
 		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")

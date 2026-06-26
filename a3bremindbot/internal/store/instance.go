@@ -61,7 +61,7 @@ func CreateInstance(db Querier, i ReminderInstance) (ReminderInstance, error) {
 }
 
 // GetInstanceByID retrieves a reminder instance by ID.
-func GetInstanceByID(db  Querier , id string) (ReminderInstance, error) {
+func GetInstanceByID(db Querier, id string) (ReminderInstance, error) {
 	const query = `SELECT id, reminder_id, for_date, time_index, scheduled_at, done_at, status, message_ids, created_at, updated_at
 		FROM reminder_instances WHERE id = ?`
 
@@ -70,7 +70,7 @@ func GetInstanceByID(db  Querier , id string) (ReminderInstance, error) {
 }
 
 // GetPending retrieves all pending instances whose scheduled_at <= now.
-func GetPending(db  Querier , now time.Time) ([]ReminderInstance, error) {
+func GetPending(db Querier, now time.Time) ([]ReminderInstance, error) {
 	const query = `SELECT id, reminder_id, for_date, time_index, scheduled_at, done_at, status, message_ids, created_at, updated_at
 		FROM reminder_instances WHERE scheduled_at <= ? AND status = 'pending'`
 
@@ -78,13 +78,13 @@ func GetPending(db  Querier , now time.Time) ([]ReminderInstance, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get pending instances: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // deferred close is idiomatic
 
 	return scanReminderInstances(rows)
 }
 
 // GetActiveByUser retrieves all pending instances for a user (for done without reply fallback).
-func GetActiveByUser(db  Querier , userID string) ([]ReminderInstance, error) {
+func GetActiveByUser(db Querier, userID string) ([]ReminderInstance, error) {
 	const query = `SELECT ri.id, ri.reminder_id, ri.for_date, ri.time_index, ri.scheduled_at, ri.done_at, ri.status, ri.message_ids, ri.created_at, ri.updated_at
 		FROM reminder_instances ri
 		JOIN reminders r ON r.id = ri.reminder_id
@@ -95,14 +95,14 @@ func GetActiveByUser(db  Querier , userID string) ([]ReminderInstance, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get active by user: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // deferred close is idiomatic
 
 	return scanReminderInstances(rows)
 }
 
 // GetInstanceByMessageID retrieves a reminder instance by a message_id (for reply binding).
 // Uses json_each to avoid a full table scan.
-func GetInstanceByMessageID(db  Querier , messageID int) (ReminderInstance, error) {
+func GetInstanceByMessageID(db Querier, messageID int) (ReminderInstance, error) {
 	const query = `SELECT ri.id, ri.reminder_id, ri.for_date, ri.time_index, ri.scheduled_at, ri.done_at, ri.status, ri.message_ids, ri.created_at, ri.updated_at
 		FROM reminder_instances ri, json_each(ri.message_ids)
 		WHERE json_extract(json_each.value, '$.message_id') = ?
@@ -114,7 +114,7 @@ func GetInstanceByMessageID(db  Querier , messageID int) (ReminderInstance, erro
 
 // GetInstancesByUserAndDay retrieves all instances for a user on a specific day in their timezone.
 // Filters by for_date — the day the instance belongs to, regardless of scheduled_at shifts.
-func GetInstancesByUserAndDay(db  Querier , userID string, date time.Time, loc *time.Location) ([]ReminderInstance, error) {
+func GetInstancesByUserAndDay(db Querier, userID string, date time.Time, loc *time.Location) ([]ReminderInstance, error) {
 	year, month, day := date.In(loc).Date()
 	startOfDay := time.Date(year, month, day, 0, 0, 0, 0, loc)
 	endOfDay := startOfDay.Add(24 * time.Hour)
@@ -129,13 +129,12 @@ func GetInstancesByUserAndDay(db  Querier , userID string, date time.Time, loc *
 	if err != nil {
 		return nil, fmt.Errorf("get instances by user and day: %w", err)
 	}
-	defer rows.Close()
-
+	defer rows.Close() //nolint:errcheck // deferred close is idiomatic
 	return scanReminderInstances(rows)
 }
 
 // SetInstanceScheduledAt updates the scheduled_at and updated_at fields of a reminder instance.
-func SetInstanceScheduledAt(db  Querier , id string, t time.Time) error {
+func SetInstanceScheduledAt(db Querier, id string, t time.Time) error {
 	const query = `UPDATE reminder_instances SET scheduled_at = ?, updated_at = ? WHERE id = ?`
 	now := time.Now().Unix()
 	res, err := db.Exec(query, t.Unix(), now, id)
@@ -146,7 +145,7 @@ func SetInstanceScheduledAt(db  Querier , id string, t time.Time) error {
 }
 
 // GetLastByReminder retrieves the last instance for a given reminder and time_index (for rescheduler).
-func GetLastByReminder(db  Querier , reminderID string, timeIndex int) (ReminderInstance, error) {
+func GetLastByReminder(db Querier, reminderID string, timeIndex int) (ReminderInstance, error) {
 	const query = `SELECT id, reminder_id, for_date, time_index, scheduled_at, done_at, status, message_ids, created_at, updated_at
 		FROM reminder_instances
 		WHERE reminder_id = ? AND time_index = ?
@@ -162,38 +161,40 @@ func GetLastByReminder(db  Querier , reminderID string, timeIndex int) (Reminder
 // If status is "missed", the update is conditional on the current status being "pending"
 // to prevent races with the done handler. If the instance is already in a non-pending
 // state, the update is silently skipped (no-op).
-func SetStatus(db  Querier , id string, status string) error {
+func SetStatus(db Querier, id string, status string) error {
 	now := time.Now().Unix()
 
-	var query string
-	var args []any
-	if status == "done" {
-		query = `UPDATE reminder_instances SET status = ?, done_at = ?, updated_at = ? WHERE id = ?`
-		args = []any{status, now, now, id}
-	} else if status == "missed" {
+	switch status {
+	case "done":
+		const query = `UPDATE reminder_instances SET status = ?, done_at = ?, updated_at = ? WHERE id = ?`
+		res, err := db.Exec(query, status, now, now, id)
+		if err != nil {
+			return fmt.Errorf("set status: %w", err)
+		}
+		return checkRowsAffected(res, "reminder_instance", id)
+
+	case "missed":
 		// Only mark as missed if still pending — prevents race with done handler.
-		query = `UPDATE reminder_instances SET status = ?, updated_at = ? WHERE id = ? AND status = 'pending'`
-		args = []any{status, now, id}
-		_, err := db.Exec(query, args...)
+		const query = `UPDATE reminder_instances SET status = ?, updated_at = ? WHERE id = ? AND status = 'pending'`
+		_, err := db.Exec(query, status, now, id)
 		if err != nil {
 			return fmt.Errorf("set status: %w", err)
 		}
 		// 0 rows affected is not an error — instance was already handled (e.g. done).
 		return nil
-	} else {
-		query = `UPDATE reminder_instances SET status = ?, updated_at = ? WHERE id = ?`
-		args = []any{status, now, id}
-	}
 
-	res, err := db.Exec(query, args...)
-	if err != nil {
-		return fmt.Errorf("set status: %w", err)
+	default:
+		const query = `UPDATE reminder_instances SET status = ?, updated_at = ? WHERE id = ?`
+		res, err := db.Exec(query, status, now, id)
+		if err != nil {
+			return fmt.Errorf("set status: %w", err)
+		}
+		return checkRowsAffected(res, "reminder_instance", id)
 	}
-	return checkRowsAffected(res, "reminder_instance", id)
 }
 
 // GetReminderInstancesByReminder retrieves all instances for a given reminder.
-func GetReminderInstancesByReminder(db  Querier , reminderID string) ([]ReminderInstance, error) {
+func GetReminderInstancesByReminder(db Querier, reminderID string) ([]ReminderInstance, error) {
 	const query = `SELECT id, reminder_id, for_date, time_index, scheduled_at, done_at, status, message_ids, created_at, updated_at
 		FROM reminder_instances WHERE reminder_id = ?`
 
@@ -201,13 +202,12 @@ func GetReminderInstancesByReminder(db  Querier , reminderID string) ([]Reminder
 	if err != nil {
 		return nil, fmt.Errorf("get instances by reminder: %w", err)
 	}
-	defer rows.Close()
-
+	defer rows.Close() //nolint:errcheck // deferred close is idiomatic
 	return scanReminderInstances(rows)
 }
 
 // DeleteReminderInstances deletes all instances for a given reminder.
-func DeleteReminderInstances(db  Querier , reminderID string) error {
+func DeleteReminderInstances(db Querier, reminderID string) error {
 	const query = `DELETE FROM reminder_instances WHERE reminder_id = ?`
 	_, err := db.Exec(query, reminderID)
 	if err != nil {
@@ -229,7 +229,7 @@ func DeleteInstancesAfterIndex(db Querier, reminderID string, fromIndex int) err
 
 // SetStatusWithDoneAt updates the status and done_at of a reminder instance.
 // Intended for "done" status with a specific doneAt time.
-func SetStatusWithDoneAt(db  Querier , id string, status string, doneAt time.Time) error {
+func SetStatusWithDoneAt(db Querier, id string, status string, doneAt time.Time) error {
 	const query = `UPDATE reminder_instances SET status = ?, done_at = ?, updated_at = ? WHERE id = ?`
 	now := time.Now().Unix()
 	res, err := db.Exec(query, status, doneAt.Unix(), now, id)
@@ -247,7 +247,7 @@ func MarkMissedAndDeleteOnce(db *sql.DB, instanceID, reminderID string) error {
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // deferred rollback is idiomatic
 
 	// SetStatus("missed") — only if still pending (conditional update prevents race).
 	now := time.Now().Unix()
@@ -309,7 +309,7 @@ func AddMessageIDAndMarkMissedDeleteOnce(db *sql.DB, instanceID, reminderID stri
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // deferred rollback is idiomatic
 
 	// Add message ID and set missed atomically, only if still pending.
 	entry := MessageIDEntry{MessageID: messageID, SentAt: sentAt.Unix()}
@@ -360,7 +360,7 @@ func AddMessageIDAndSetMissed(db *sql.DB, instanceID string, messageID int, sent
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // deferred rollback is idiomatic
 
 	entry := MessageIDEntry{MessageID: messageID, SentAt: sentAt.Unix()}
 	entryJSON, err := json.Marshal(entry)

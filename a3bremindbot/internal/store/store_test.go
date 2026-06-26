@@ -18,19 +18,8 @@ func newTestDB(t *testing.T) *sql.DB {
 	db, err := InitDB("sqlite", ":memory:")
 	require.NoError(t, err)
 	db.SetMaxOpenConns(1)
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { db.Close() }) //nolint:errcheck // test cleanup
 	return db
-}
-
-func mustTime(t *testing.T, s string) time.Time {
-	t.Helper()
-	tm, err := time.Parse(time.RFC3339, s)
-	require.NoError(t, err)
-	return tm
-}
-
-func timePtr(t time.Time) *time.Time {
-	return &t
 }
 
 // ---------------------------------------------------------------------------
@@ -220,9 +209,9 @@ func TestGetAllReminders(t *testing.T) {
 	db := newTestDB(t)
 
 	u, _ := GetOrCreate(db, 14)
-	Create(db, Reminder{UserID: u.ID, Label: "A", Times: []string{"09:00"}, Repeat: "daily"})
-	Create(db, Reminder{UserID: u.ID, Label: "B", Times: []string{"10:00"}, Repeat: "once"})
-	Create(db, Reminder{UserID: u.ID, Label: "C", Times: []string{"11:00"}, Repeat: "daily"})
+	Create(db, Reminder{UserID: u.ID, Label: "A", Times: []string{"09:00"}, Repeat: "daily"}) //nolint:errcheck // test setup
+	Create(db, Reminder{UserID: u.ID, Label: "B", Times: []string{"10:00"}, Repeat: "once"})  //nolint:errcheck // test setup
+	Create(db, Reminder{UserID: u.ID, Label: "C", Times: []string{"11:00"}, Repeat: "daily"}) //nolint:errcheck // test setup
 
 	all, err := GetAll(db, u.ID)
 	require.NoError(t, err)
@@ -384,11 +373,11 @@ func TestGetPending(t *testing.T) {
 	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Pending test", Times: []string{"09:00"}, Repeat: "daily"})
 
 	// Past — should be pending.
-	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: past, TimeIndex: 0, ScheduledAt: past, Status: "pending"})
+	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: past, TimeIndex: 0, ScheduledAt: past, Status: "pending"}) //nolint:errcheck // test setup
 	// Future — should NOT be pending yet.
-	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: future, TimeIndex: 1, ScheduledAt: future, Status: "pending"})
+	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: future, TimeIndex: 1, ScheduledAt: future, Status: "pending"}) //nolint:errcheck // test setup
 	// Past but done — should NOT be selected.
-	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: past, TimeIndex: 2, ScheduledAt: past, Status: "done"})
+	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: past, TimeIndex: 2, ScheduledAt: past, Status: "done"}) //nolint:errcheck // test setup
 
 	pending, err := GetPending(db, now)
 	require.NoError(t, err)
@@ -404,12 +393,12 @@ func TestGetActiveByUser(t *testing.T) {
 	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Active test", Times: []string{"09:00"}, Repeat: "daily"})
 	r2, _ := Create(db, Reminder{UserID: u2.ID, Label: "Other user", Times: []string{"09:00"}, Repeat: "daily"})
 
-	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: time.Now(), TimeIndex: 0, ScheduledAt: time.Now(), Status: "pending"})
-	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: time.Now(), TimeIndex: 1, ScheduledAt: time.Now(), Status: "pending"})
+	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: time.Now(), TimeIndex: 0, ScheduledAt: time.Now(), Status: "pending"}) //nolint:errcheck
+	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: time.Now(), TimeIndex: 1, ScheduledAt: time.Now(), Status: "pending"}) //nolint:errcheck
 	// This instance belongs to other user.
-	CreateInstance(db, ReminderInstance{ReminderID: r2.ID, ForDate: time.Now(), TimeIndex: 0, ScheduledAt: time.Now(), Status: "pending"})
+	CreateInstance(db, ReminderInstance{ReminderID: r2.ID, ForDate: time.Now(), TimeIndex: 0, ScheduledAt: time.Now(), Status: "pending"}) //nolint:errcheck
 	// Done — should not appear.
-	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: time.Now(), TimeIndex: 2, ScheduledAt: time.Now(), Status: "done"})
+	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: time.Now(), TimeIndex: 2, ScheduledAt: time.Now(), Status: "done"}) //nolint:errcheck
 
 	active, err := GetActiveByUser(db, u.ID)
 	require.NoError(t, err)
@@ -471,11 +460,11 @@ func TestGetLastByReminder(t *testing.T) {
 	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Last test", Times: []string{"09:00", "17:00"}, Repeat: "daily"})
 
 	// TimeIndex 0 — create two instances at different times.
-	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: now, TimeIndex: 0, ScheduledAt: now.Add(-2 * time.Hour), Status: "done"})
+	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: now, TimeIndex: 0, ScheduledAt: now.Add(-2 * time.Hour), Status: "done"}) //nolint:errcheck
 	latest, _ := CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: now, TimeIndex: 0, ScheduledAt: now.Add(-1 * time.Hour), Status: "done"})
 
 	// TimeIndex 1 — one instance.
-	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: now, TimeIndex: 1, ScheduledAt: now, Status: "pending"})
+	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: now, TimeIndex: 1, ScheduledAt: now, Status: "pending"}) //nolint:errcheck
 
 	got, err := GetLastByReminder(db, r.ID, 0)
 	require.NoError(t, err)
@@ -665,8 +654,8 @@ func TestMultipleUsersNoCrossContamination(t *testing.T) {
 	u1, _ := GetOrCreate(db, 100)
 	u2, _ := GetOrCreate(db, 200)
 
-	Create(db, Reminder{UserID: u1.ID, Label: "U1 reminder", Times: []string{"09:00"}, Repeat: "daily"})
-	Create(db, Reminder{UserID: u2.ID, Label: "U2 reminder", Times: []string{"10:00"}, Repeat: "daily"})
+	Create(db, Reminder{UserID: u1.ID, Label: "U1 reminder", Times: []string{"09:00"}, Repeat: "daily"}) //nolint:errcheck
+	Create(db, Reminder{UserID: u2.ID, Label: "U2 reminder", Times: []string{"10:00"}, Repeat: "daily"}) //nolint:errcheck
 
 	r1, _ := GetAll(db, u1.ID)
 	r2, _ := GetAll(db, u2.ID)
@@ -733,8 +722,8 @@ func TestDuplicateTelegramIDReturnsExisting(t *testing.T) {
 	require.NoError(t, err)
 
 	// Set some data on the first one.
-	SetTimezone(db, u1.ID, "Asia/Tokyo")
-	SetPaused(db, u1.ID, true)
+	SetTimezone(db, u1.ID, "Asia/Tokyo") //nolint:errcheck
+	SetPaused(db, u1.ID, true)           //nolint:errcheck
 
 	// GetOrCreate again.
 	u2, err := GetOrCreate(db, 400)
@@ -808,7 +797,7 @@ func TestDeleteReminderCascadesNothing(t *testing.T) {
 
 	u, _ := GetOrCreate(db, 600)
 	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Cascade test", Times: []string{"09:00"}, Repeat: "daily"})
-	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: time.Now(), TimeIndex: 0, ScheduledAt: time.Now(), Status: "pending"})
+	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: time.Now(), TimeIndex: 0, ScheduledAt: time.Now(), Status: "pending"}) //nolint:errcheck
 
 	err := Delete(db, r.ID)
 	require.NoError(t, err)
@@ -848,6 +837,7 @@ func TestGetInstancesByUserAndDay(t *testing.T) {
 		Status:      "done",
 	})
 	// Instance for a different day
+	//nolint:errcheck // test setup
 	CreateInstance(db, ReminderInstance{
 		ReminderID:  r.ID,
 		ForDate:     time.Date(2026, 6, 26, 0, 0, 0, 0, moscow),
@@ -898,6 +888,7 @@ func TestGetInstancesByUserAndDay_TimezoneBoundary(t *testing.T) {
 		Status:      "pending",
 	})
 	// Instance at 2026-06-24 20:00 UTC = 2026-06-24 23:00 MSK — should be June 24 in Moscow
+	//nolint:errcheck // test setup
 	CreateInstance(db, ReminderInstance{
 		ReminderID:  r.ID,
 		ForDate:     time.Date(2026, 6, 24, 0, 0, 0, 0, moscow),
@@ -1061,14 +1052,14 @@ func TestDeleteReminderInstances(t *testing.T) {
 	u, _ := GetOrCreate(db, 930)
 	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Test", Times: []string{"09:00"}, Repeat: "daily"})
 
-	CreateInstance(db, ReminderInstance{
+	CreateInstance(db, ReminderInstance{ //nolint:errcheck
 		ReminderID:  r.ID,
 		ForDate:     time.Now(),
 		TimeIndex:   0,
 		ScheduledAt: time.Now(),
 		Status:      "pending",
 	})
-	CreateInstance(db, ReminderInstance{
+	CreateInstance(db, ReminderInstance{ //nolint:errcheck
 		ReminderID:  r.ID,
 		ForDate:     time.Now(),
 		TimeIndex:   1,
@@ -1200,7 +1191,7 @@ func TestDeleteInstancesAfterIndex_OnlyAffectsCorrectReminder(t *testing.T) {
 		ScheduledAt: time.Now(),
 		Status:      "pending",
 	})
-	CreateInstance(db, ReminderInstance{
+	CreateInstance(db, ReminderInstance{ //nolint:errcheck
 		ReminderID:  r1.ID,
 		ForDate:     time.Now(),
 		TimeIndex:   1,

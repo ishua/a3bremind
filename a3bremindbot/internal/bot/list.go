@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/a3bremind/a3bremindbot/internal/store"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // handleList обрабатывает /list — показывает все Reminder шаблоны.
@@ -36,18 +36,18 @@ func (h *Handler) handleList(update tgbotapi.Update) {
 			label = "(без названия)"
 		}
 
-		sb.WriteString(fmt.Sprintf("%s · %s\n", label, r.Repeat))
-		sb.WriteString(fmt.Sprintf("  `/delete %s`\n", r.ID))
-		sb.WriteString(fmt.Sprintf("  `/list instances %s`\n", r.ID))
+		fmt.Fprintf(&sb, "%s · %s\n", label, r.Repeat)
+		fmt.Fprintf(&sb, "  `/delete %s`\n", r.ID)
+		fmt.Fprintf(&sb, "  `/list instances %s`\n", r.ID)
 
 		if len(r.Times) > 0 {
 			timesStr := strings.Join(r.Times, " ")
 			if r.MinGap != nil {
 				gapMinutes := *r.MinGap
 				gapStr := formatGap(gapMinutes)
-				sb.WriteString(fmt.Sprintf("  ⏰ %s (gap: %s)\n", timesStr, gapStr))
+				fmt.Fprintf(&sb, "  ⏰ %s (gap: %s)\n", timesStr, gapStr)
 			} else {
-				sb.WriteString(fmt.Sprintf("  ⏰ %s\n", timesStr))
+				fmt.Fprintf(&sb, "  ⏰ %s\n", timesStr)
 			}
 		}
 

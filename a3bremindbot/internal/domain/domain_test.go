@@ -19,7 +19,7 @@ func newTestDB(t *testing.T) *sql.DB {
 	db, err := store.InitDB("sqlite", ":memory:")
 	require.NoError(t, err)
 	db.SetMaxOpenConns(1)
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { db.Close() }) //nolint:errcheck // test cleanup
 	return db
 }
 

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/a3bremind/a3bremindbot/internal/store"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // handleListInstances обрабатывает /list instances <reminder_id>.
@@ -78,32 +78,32 @@ func (h *Handler) handleListInstances(update tgbotapi.Update) {
 
 	// Форматируем вывод
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("💊 %s\n", reminder.Label))
+	fmt.Fprintf(&sb, "💊 %s\n", reminder.Label)
 
 	for _, inst := range todayInstances {
 		scheduledStr := inst.ScheduledAt.In(loc).Format("15:04")
 
 		switch inst.Status {
 		case "done":
-			sb.WriteString(fmt.Sprintf("✅ %s\n", scheduledStr))
+			fmt.Fprintf(&sb, "✅ %s\n", scheduledStr)
 		case "missed":
 			// Показываем короткий UUID
 			shortID := inst.ID
 			if len(shortID) > 8 {
 				shortID = shortID[:8]
 			}
-			sb.WriteString(fmt.Sprintf("❌ %s — %s…\n", scheduledStr, shortID))
+			fmt.Fprintf(&sb, "❌ %s — %s…\n", scheduledStr, shortID)
 		default:
 			// pending, skipped и т.д.
 			shortID := inst.ID
 			if len(shortID) > 8 {
 				shortID = shortID[:8]
 			}
-			sb.WriteString(fmt.Sprintf("⏳ %s — %s…\n", scheduledStr, shortID))
+			fmt.Fprintf(&sb, "⏳ %s — %s…\n", scheduledStr, shortID)
 		}
 
 		// Готовая команда /done
-		sb.WriteString(fmt.Sprintf("  `/done %s %s`\n", inst.ID, scheduledStr))
+		fmt.Fprintf(&sb, "  `/done %s %s`\n", inst.ID, scheduledStr)
 	}
 
 	h.sendMarkdown(update.Message.Chat.ID, strings.TrimSpace(sb.String()))

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/a3bremind/a3bremindbot/internal/store"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // handleSchedule обрабатывает /schedule.
@@ -70,12 +70,12 @@ func (h *Handler) handleSchedule(update tgbotapi.Update) {
 
 	for _, reminderID := range groupOrder {
 		group := groupMap[reminderID]
-		sb.WriteString(fmt.Sprintf("%s\n", group.Label))
+		fmt.Fprintf(&sb, "%s\n", group.Label)
 		for _, inst := range group.Instances {
 			scheduledInLoc := inst.ScheduledAt.In(loc)
 			timeStr := scheduledInLoc.Format("15:04")
 			icon := statusIcon(inst.Status)
-			sb.WriteString(fmt.Sprintf("%s %s\n", icon, timeStr))
+			fmt.Fprintf(&sb, "%s %s\n", icon, timeStr)
 		}
 		sb.WriteString("\n")
 	}

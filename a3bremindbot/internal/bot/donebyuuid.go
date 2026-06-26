@@ -5,9 +5,9 @@ import (
 	"strings"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/a3bremind/a3bremindbot/internal/domain"
 	"github.com/a3bremind/a3bremindbot/internal/store"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // handleDoneByUUID обрабатывает /done <uuid> [HH:MM].
@@ -91,7 +91,7 @@ func (h *Handler) handleDoneByUUID(update tgbotapi.Update) {
 		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
 		return
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // deferred rollback is idiomatic
 
 	// 1. Удаляем все Instance с time_index > current
 	if err := store.DeleteInstancesAfterIndex(tx, instance.ReminderID, instance.TimeIndex); err != nil {

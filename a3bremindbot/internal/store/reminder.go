@@ -22,7 +22,7 @@ type Reminder struct {
 }
 
 // Create inserts a new reminder.
-func Create(db  Querier , r Reminder) (Reminder, error) {
+func Create(db Querier, r Reminder) (Reminder, error) {
 	if r.ID == "" {
 		r.ID = uuid.New().String()
 	}
@@ -47,7 +47,7 @@ func Create(db  Querier , r Reminder) (Reminder, error) {
 }
 
 // GetAll retrieves all reminders for a user.
-func GetAll(db  Querier , userID string) ([]Reminder, error) {
+func GetAll(db Querier, userID string) ([]Reminder, error) {
 	const query = `SELECT id, user_id, label, times, min_gap, repeat, created_at, updated_at
 		FROM reminders WHERE user_id = ?`
 
@@ -55,7 +55,7 @@ func GetAll(db  Querier , userID string) ([]Reminder, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get all reminders: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // deferred close is idiomatic
 
 	var result []Reminder
 	for rows.Next() {
@@ -78,7 +78,7 @@ func GetAll(db  Querier , userID string) ([]Reminder, error) {
 }
 
 // GetByID retrieves a reminder by its ID.
-func GetByID(db  Querier , id string) (Reminder, error) {
+func GetByID(db Querier, id string) (Reminder, error) {
 	const query = `SELECT id, user_id, label, times, min_gap, repeat, created_at, updated_at
 		FROM reminders WHERE id = ?`
 
@@ -87,7 +87,7 @@ func GetByID(db  Querier , id string) (Reminder, error) {
 }
 
 // Update updates a reminder's mutable fields and sets updated_at to now.
-func Update(db  Querier , r Reminder) error {
+func Update(db Querier, r Reminder) error {
 	now := time.Now().Unix()
 
 	timesJSON, err := json.Marshal(r.Times)
@@ -106,7 +106,7 @@ func Update(db  Querier , r Reminder) error {
 }
 
 // Delete removes a reminder by ID.
-func Delete(db  Querier , id string) error {
+func Delete(db Querier, id string) error {
 	const query = `DELETE FROM reminders WHERE id = ?`
 	res, err := db.Exec(query, id)
 	if err != nil {

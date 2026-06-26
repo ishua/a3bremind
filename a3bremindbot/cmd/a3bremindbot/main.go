@@ -4,11 +4,11 @@ import (
 	"log/slog"
 	"os"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/a3bremind/a3bremindbot/internal/bot"
 	"github.com/a3bremind/a3bremindbot/internal/domain"
 	"github.com/a3bremind/a3bremindbot/internal/scheduler"
 	"github.com/a3bremind/a3bremindbot/internal/store"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func main() {
@@ -34,7 +34,11 @@ func main() {
 		os.Exit(1)
 	}
 	db.SetMaxOpenConns(1)
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			slog.Error("close db", "error", err)
+		}
+	}()
 
 	botAPI, err := tgbotapi.NewBotAPI(token)
 	if err != nil {

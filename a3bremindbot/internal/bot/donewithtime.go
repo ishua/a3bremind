@@ -5,9 +5,9 @@ import (
 	"strings"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/a3bremind/a3bremindbot/internal/domain"
 	"github.com/a3bremind/a3bremindbot/internal/store"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // handleDoneWithTime обрабатывает "done HH:MM" / "ok HH:MM" / "+ HH:MM".
@@ -140,7 +140,7 @@ func (h *Handler) handleConfirmDoneTime(update tgbotapi.Update) {
 		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
 		return
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // deferred rollback is idiomatic
 
 	if err := store.SetStatusWithDoneAt(tx, entry.InstanceID, "done", entry.DoneAt); err != nil {
 		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")

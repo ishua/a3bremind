@@ -22,8 +22,10 @@ import (
 // ---------------------------------------------------------------------------
 
 type mockBot struct {
-	sent  []tgbotapi.MessageConfig
-	msgID int
+	sent      []tgbotapi.MessageConfig
+	msgID     int
+	callbacks []tgbotapi.CallbackConfig
+	edits     []interface{} // edit message requests
 }
 
 func (m *mockBot) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
@@ -31,6 +33,18 @@ func (m *mockBot) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
 	m.msgID++
 	m.sent = append(m.sent, cfg)
 	return tgbotapi.Message{MessageID: m.msgID}, nil
+}
+
+func (m *mockBot) Request(c tgbotapi.Chattable) (*tgbotapi.APIResponse, error) {
+	switch v := c.(type) {
+	case tgbotapi.CallbackConfig:
+		m.callbacks = append(m.callbacks, v)
+	case tgbotapi.EditMessageReplyMarkupConfig:
+		m.edits = append(m.edits, v)
+	case tgbotapi.EditMessageTextConfig:
+		m.edits = append(m.edits, v)
+	}
+	return &tgbotapi.APIResponse{Ok: true}, nil
 }
 
 func (m *mockBot) LastText() string {
@@ -49,7 +63,7 @@ func newTestDB(t *testing.T) *sql.DB {
 	db, err := store.InitDB("sqlite", ":memory:")
 	require.NoError(t, err)
 	db.SetMaxOpenConns(1)
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { db.Close() }) //nolint:errcheck // test cleanup
 	return db
 }
 
@@ -405,7 +419,7 @@ func TestHandleAdd_InvalidTime(t *testing.T) {
 	h.HandleUpdate(upd)
 
 	text := mock.LastText()
-	assert.Contains(t, text, "Неверный формат")
+	assert.Contains(t, text, "неверный формат")
 }
 
 func TestHandleAdd_Series(t *testing.T) {
@@ -645,7 +659,7 @@ func TestHandleDone_AlreadyDone(t *testing.T) {
 	assert.Contains(t, text, "уже выполнено")
 }
 
-func TestHandleDone_OkSynonym(t *testing.T) {
+func TestHandleDone_Synonyms(t *testing.T) {
 	db, mock, h := setup(t)
 
 	user, err := store.GetOrCreate(db, 12345)
@@ -653,92 +667,60 @@ func TestHandleDone_OkSynonym(t *testing.T) {
 	err = store.SetTimezone(db, user.ID, "UTC")
 	require.NoError(t, err)
 
-	r, err := store.Create(db, store.Reminder{
-		UserID: user.ID,
-		Label:  "Ok test",
-		Times:  []string{"09:00"},
-		Repeat: "daily",
-	})
-	require.NoError(t, err)
-
-	inst, err := store.CreateInstance(db, store.ReminderInstance{
-		ReminderID:  r.ID,
-		ForDate:     time.Now(),
-		TimeIndex:   0,
-		ScheduledAt: time.Now().Add(-1 * time.Hour),
-		Status:      "pending",
-	})
-	require.NoError(t, err)
-
-	err = store.AddMessageID(db, inst.ID, 300, time.Now())
-	require.NoError(t, err)
-
-	err = store.InsertInstanceReply(db, 300, inst.ID)
-	require.NoError(t, err)
-
-	upd := tgbotapi.Update{
-		Message: &tgbotapi.Message{
-			Text: "ok",
-			Chat: &tgbotapi.Chat{ID: 12345},
-			From: &tgbotapi.User{ID: 12345},
-			ReplyToMessage: &tgbotapi.Message{
-				MessageID: 300,
-			},
-		},
+	tests := []struct {
+		name  string
+		text  string
+		msgID int
+	}{
+		{"ok synonym", "ok", 300},
+		{"+ synonym", "+", 400},
 	}
 
-	h.HandleUpdate(upd)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, err := store.Create(db, store.Reminder{
+				UserID: user.ID,
+				Label:  tt.name + " test",
+				Times:  []string{"09:00"},
+				Repeat: "daily",
+			})
+			require.NoError(t, err)
 
-	text := mock.LastText()
-	assert.Contains(t, text, "✅")
-}
+			inst, err := store.CreateInstance(db, store.ReminderInstance{
+				ReminderID:  r.ID,
+				ForDate:     time.Now(),
+				TimeIndex:   0,
+				ScheduledAt: time.Now().Add(-1 * time.Hour),
+				Status:      "pending",
+			})
+			require.NoError(t, err)
 
-func TestHandleDone_PlusSynonym(t *testing.T) {
-	db, mock, h := setup(t)
+			err = store.AddMessageID(db, inst.ID, tt.msgID, time.Now())
+			require.NoError(t, err)
 
-	user, err := store.GetOrCreate(db, 12345)
-	require.NoError(t, err)
-	err = store.SetTimezone(db, user.ID, "UTC")
-	require.NoError(t, err)
+			err = store.InsertInstanceReply(db, tt.msgID, inst.ID)
+			require.NoError(t, err)
 
-	r, err := store.Create(db, store.Reminder{
-		UserID: user.ID,
-		Label:  "Plus test",
-		Times:  []string{"09:00"},
-		Repeat: "daily",
-	})
-	require.NoError(t, err)
+			upd := tgbotapi.Update{
+				Message: &tgbotapi.Message{
+					Text: tt.text,
+					Chat: &tgbotapi.Chat{ID: 12345},
+					From: &tgbotapi.User{ID: 12345},
+					ReplyToMessage: &tgbotapi.Message{
+						MessageID: tt.msgID,
+					},
+				},
+			}
 
-	inst, err := store.CreateInstance(db, store.ReminderInstance{
-		ReminderID:  r.ID,
-		ForDate:     time.Now(),
-		TimeIndex:   0,
-		ScheduledAt: time.Now().Add(-1 * time.Hour),
-		Status:      "pending",
-	})
-	require.NoError(t, err)
+			// Reset mock between sub-tests
+			mock.sent = nil
 
-	err = store.AddMessageID(db, inst.ID, 400, time.Now())
-	require.NoError(t, err)
+			h.HandleUpdate(upd)
 
-	err = store.InsertInstanceReply(db, 400, inst.ID)
-	require.NoError(t, err)
-
-	upd := tgbotapi.Update{
-		Message: &tgbotapi.Message{
-			Text: "+",
-			Chat: &tgbotapi.Chat{ID: 12345},
-			From: &tgbotapi.User{ID: 12345},
-			ReplyToMessage: &tgbotapi.Message{
-				MessageID: 400,
-			},
-		},
+			text := mock.LastText()
+			assert.Contains(t, text, "✅")
+		})
 	}
-
-	h.HandleUpdate(upd)
-
-	text := mock.LastText()
-	assert.Contains(t, text, "✅")
 }
 
 // ---------------------------------------------------------------------------
@@ -767,6 +749,7 @@ func TestHandleSchedule_Today(t *testing.T) {
 	// Сегодня в 12:00
 	today12 := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC)
 
+	//nolint:errcheck // test setup
 	store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
 		ForDate:     now,
@@ -774,6 +757,7 @@ func TestHandleSchedule_Today(t *testing.T) {
 		ScheduledAt: today09,
 		Status:      "done",
 	})
+	//nolint:errcheck // test setup
 	store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
 		ForDate:     now,
@@ -832,6 +816,7 @@ func TestHandleList_WithReminders(t *testing.T) {
 	require.NoError(t, err)
 
 	minGap := 180
+	//nolint:errcheck // test setup
 	store.Create(db, store.Reminder{
 		UserID: user.ID,
 		Label:  "Капли",
@@ -839,6 +824,7 @@ func TestHandleList_WithReminders(t *testing.T) {
 		MinGap: &minGap,
 		Repeat: "daily",
 	})
+	//nolint:errcheck // test setup
 	store.Create(db, store.Reminder{
 		UserID: user.ID,
 		Label:  "Отжимания",
@@ -1063,6 +1049,7 @@ func TestHandleSkip_LastIndex(t *testing.T) {
 	require.NoError(t, err)
 
 	now := time.Now().Truncate(time.Second)
+	//nolint:errcheck // test setup
 	store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
 		TimeIndex:   0,
@@ -1463,6 +1450,7 @@ func TestHandleDelete(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create instances
+	//nolint:errcheck // test setup
 	store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
 		ForDate:     time.Now(),
@@ -1470,6 +1458,7 @@ func TestHandleDelete(t *testing.T) {
 		ScheduledAt: time.Now(),
 		Status:      "pending",
 	})
+	//nolint:errcheck // test setup
 	store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
 		ForDate:     time.Now(),
@@ -1842,4 +1831,278 @@ func TestHandleDoneByUUID_NotFound(t *testing.T) {
 
 	text := mock.LastText()
 	assert.Contains(t, text, "Напоминание не найдено")
+}
+
+// ---------------------------------------------------------------------------
+// Callback query tests
+// ---------------------------------------------------------------------------
+
+func updateWithCallback(data string, chatID int64, userID int64, messageID int) tgbotapi.Update {
+	return tgbotapi.Update{
+		CallbackQuery: &tgbotapi.CallbackQuery{
+			ID:   "callback-id-" + data,
+			From: &tgbotapi.User{ID: userID},
+			Message: &tgbotapi.Message{
+				MessageID: messageID,
+				Chat:      &tgbotapi.Chat{ID: chatID},
+			},
+			Data: data,
+		},
+	}
+}
+
+func TestHandleCallbackDone_Success(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Callback done",
+		Times:  []string{"09:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		ForDate:     time.Now(),
+		TimeIndex:   0,
+		ScheduledAt: time.Now().Add(-1 * time.Hour),
+		Status:      "pending",
+	})
+	require.NoError(t, err)
+
+	upd := updateWithCallback("done:"+inst.ID, 12345, 12345, 100)
+	h.HandleUpdate(upd)
+
+	// Should have answered callback
+	require.Len(t, mock.callbacks, 1)
+	assert.Contains(t, mock.callbacks[0].Text, "✅")
+
+	// Should have edited the message text
+	require.GreaterOrEqual(t, len(mock.edits), 1)
+	editText, ok := mock.edits[0].(tgbotapi.EditMessageTextConfig)
+	require.True(t, ok, "expected EditMessageTextConfig")
+	assert.Contains(t, editText.Text, "✅")
+	assert.Contains(t, editText.Text, "Callback done")
+
+	// Verify instance is done
+	got, err := store.GetInstanceByID(db, inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "done", got.Status)
+}
+
+func TestHandleCallbackDone_WrongOwner(t *testing.T) {
+	db, mock, h := setup(t)
+
+	// Create user 12345
+	user1, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user1.ID, "UTC")
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user1.ID,
+		Label:  "Not yours",
+		Times:  []string{"09:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		ForDate:     time.Now(),
+		TimeIndex:   0,
+		ScheduledAt: time.Now().Add(-1 * time.Hour),
+		Status:      "pending",
+	})
+	require.NoError(t, err)
+
+	// Different user (99999) tries to done
+	upd := updateWithCallback("done:"+inst.ID, 12345, 99999, 100)
+	h.HandleUpdate(upd)
+
+	// Should answer with error
+	require.Len(t, mock.callbacks, 1)
+	assert.Contains(t, mock.callbacks[0].Text, "не твоё")
+
+	// Instance should still be pending
+	got, err := store.GetInstanceByID(db, inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "pending", got.Status)
+}
+
+func TestHandleCallbackDone_AlreadyDone(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Already done",
+		Times:  []string{"09:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		ForDate:     time.Now(),
+		TimeIndex:   0,
+		ScheduledAt: time.Now().Add(-2 * time.Hour),
+		Status:      "done",
+		DoneAt:      timePtr(time.Now()),
+	})
+	require.NoError(t, err)
+
+	upd := updateWithCallback("done:"+inst.ID, 12345, 12345, 100)
+	h.HandleUpdate(upd)
+
+	// Should answer "already done"
+	require.Len(t, mock.callbacks, 1)
+	assert.Contains(t, mock.callbacks[0].Text, "выполнено")
+
+	// Should have edited buttons away
+	require.GreaterOrEqual(t, len(mock.edits), 1)
+}
+
+func TestHandleCallbackSnooze_Success(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Callback snooze",
+		Times:  []string{"09:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	originalTime := time.Now().Add(-1 * time.Hour).Truncate(time.Second)
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		ForDate:     originalTime,
+		TimeIndex:   0,
+		ScheduledAt: originalTime,
+		Status:      "pending",
+	})
+	require.NoError(t, err)
+
+	upd := updateWithCallback("snooze:"+inst.ID, 12345, 12345, 100)
+	h.HandleUpdate(upd)
+
+	// Should answer callback
+	require.Len(t, mock.callbacks, 1)
+	assert.Contains(t, mock.callbacks[0].Text, "Напомню")
+
+	// Should have edited the message text
+	require.GreaterOrEqual(t, len(mock.edits), 1)
+	editText, ok := mock.edits[0].(tgbotapi.EditMessageTextConfig)
+	require.True(t, ok, "expected EditMessageTextConfig")
+	assert.Contains(t, editText.Text, "🔇")
+
+	// Verify scheduled_at was shifted forward
+	got, err := store.GetInstanceByID(db, inst.ID)
+	require.NoError(t, err)
+	assert.Greater(t, got.ScheduledAt.Unix(), originalTime.Unix(),
+		"scheduled_at should be shifted forward")
+}
+
+func TestHandleCallbackSkip_Success(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Callback skip",
+		Times:  []string{"09:00", "12:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	now := time.Now().Truncate(time.Second)
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		ForDate:     now,
+		TimeIndex:   0,
+		ScheduledAt: now.Add(-1 * time.Hour),
+		Status:      "pending",
+	})
+	require.NoError(t, err)
+
+	upd := updateWithCallback("skip:"+inst.ID, 12345, 12345, 100)
+	h.HandleUpdate(upd)
+
+	// Should answer callback
+	require.Len(t, mock.callbacks, 1)
+	assert.Contains(t, mock.callbacks[0].Text, "Пропущено")
+
+	// Should have edited the message text
+	require.GreaterOrEqual(t, len(mock.edits), 1)
+	editText, ok := mock.edits[0].(tgbotapi.EditMessageTextConfig)
+	require.True(t, ok, "expected EditMessageTextConfig")
+	assert.Contains(t, editText.Text, "⏭️")
+
+	// Verify instance is skipped
+	got, err := store.GetInstanceByID(db, inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "skipped", got.Status)
+
+	// Next instance should be created
+	active, err := store.GetActiveByUser(db, user.ID)
+	require.NoError(t, err)
+	require.Len(t, active, 1)
+	assert.Equal(t, 1, active[0].TimeIndex)
+}
+
+func TestHandleCallback_InvalidData(t *testing.T) {
+	_, mock, h := setup(t)
+
+	// Missing colon separator
+	upd := updateWithCallback("invalid", 12345, 12345, 100)
+	h.HandleUpdate(upd)
+
+	require.Len(t, mock.callbacks, 1)
+	assert.Contains(t, mock.callbacks[0].Text, "неверный формат")
+}
+
+func TestHandleCallback_UnknownAction(t *testing.T) {
+	_, mock, h := setup(t)
+
+	upd := updateWithCallback("unknown:00000000-0000-0000-0000-000000000000", 12345, 12345, 100)
+	h.HandleUpdate(upd)
+
+	require.Len(t, mock.callbacks, 1)
+	assert.Contains(t, mock.callbacks[0].Text, "Неизвестное")
+}
+
+func TestHandleCallback_NotFoundInstance(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	// Valid-looking UUID but doesn't exist
+	upd := updateWithCallback("done:00000000-0000-0000-0000-000000000000", 12345, 12345, 100)
+	h.HandleUpdate(upd)
+
+	require.Len(t, mock.callbacks, 1)
+	assert.Contains(t, mock.callbacks[0].Text, "не найдено")
 }

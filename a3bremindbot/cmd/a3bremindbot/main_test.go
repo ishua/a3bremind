@@ -11,7 +11,7 @@ func TestMaxOpenConnsSet(t *testing.T) {
 	// Verify that InitDB + SetMaxOpenConns(1) works without panicking.
 	db, err := store.InitDB("sqlite", ":memory:")
 	require.NoError(t, err)
-	defer db.Close()
+	defer db.Close() //nolint:errcheck // test cleanup
 
 	db.SetMaxOpenConns(1)
 

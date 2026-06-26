@@ -7,13 +7,14 @@ import (
 	"sync"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/a3bremind/a3bremindbot/internal/scheduler"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-// BotAPI — минимальный интерфейс для отправки сообщений через Telegram API.
+// BotAPI — интерфейс для отправки сообщений и запросов через Telegram API.
 type BotAPI interface {
 	Send(c tgbotapi.Chattable) (tgbotapi.Message, error)
+	Request(c tgbotapi.Chattable) (*tgbotapi.APIResponse, error)
 }
 
 // pendingConfirmEntry holds data for a done HH:MM confirmation request.
@@ -43,6 +44,12 @@ func NewHandler(db *sql.DB, bot BotAPI, scheduler *scheduler.Scheduler, version 
 
 // HandleUpdate маршрутизирует один update от Telegram.
 func (h *Handler) HandleUpdate(update tgbotapi.Update) {
+	// CallbackQuery (inline-кнопки) обрабатываем до сообщений.
+	if update.CallbackQuery != nil {
+		h.handleCallback(update)
+		return
+	}
+
 	if update.Message == nil {
 		return
 	}

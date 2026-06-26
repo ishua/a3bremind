@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/a3bremind/a3bremindbot/internal/domain"
 	"github.com/a3bremind/a3bremindbot/internal/store"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // handleSkip обрабатывает /skip — пропускает текущее напоминание.
@@ -38,7 +38,7 @@ func (h *Handler) handleSkip(update tgbotapi.Update) {
 		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
 		return
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // deferred rollback is idiomatic
 
 	// SetStatus("skipped") — не проставляет done_at
 	if err := store.SetStatus(tx, instance.ID, "skipped"); err != nil {

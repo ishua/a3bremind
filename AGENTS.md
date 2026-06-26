@@ -13,6 +13,9 @@ make test-store                  # only store layer: go test ./internal/store/..
 # build
 go build ./cmd/a3bremindbot
 
+# lint (must pass after every code change)
+make lint                        # golangci-lint run ./...
+
 # run locally (env required)
 TELEGRAM_BOT_TOKEN=... DB_PATH=bot.db go run ./cmd/a3bremindbot
 ```
@@ -49,6 +52,13 @@ Dependency direction: `store ← domain ← bot`. Each package only imports pack
 Each new bot command follows this pattern:
 1. Create `internal/bot/<command>.go` with `func (h *Handler) handleXxx(update)`.
 2. Register in `handleCommand` in `handler.go` with a `case strings.HasPrefix(text, "/xxx")`.
+
+## Linting
+
+- **Must pass after every code change**: `make lint` (runs `golangci-lint run ./...`).
+- Linter config: `.golangci.yml` in `a3bremindbot/`.
+- Before committing, verify: `make test && make lint`.
+- Do not suppress lint warnings with `//nolint` in production code without a good reason (the comment explaining why is required).
 
 ## Key conventions
 

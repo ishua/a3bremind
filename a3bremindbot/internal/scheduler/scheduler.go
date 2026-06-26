@@ -9,7 +9,8 @@ import (
 
 // Scheduler runs domain logic at a fixed interval.
 // It is a thin coordinator:
-//   tick → Engine.Tick() → []Notification → Notifier.Notify() → Engine.RecordSent()
+//
+//	tick → Engine.Tick() → []Notification → Notifier.Notify() → Engine.RecordSent()
 type Scheduler struct {
 	engine   Engine
 	notifier Notifier
