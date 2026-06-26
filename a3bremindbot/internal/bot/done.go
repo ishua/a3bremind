@@ -85,10 +85,14 @@ func (h *Handler) handleDone(update tgbotapi.Update) {
 		return
 	}
 
-	// Форматируем время из done_at
+	// Форматируем время из done_at в timezone пользователя
+	loc, locErr := time.LoadLocation(user.Timezone)
+	if locErr != nil {
+		loc = time.UTC
+	}
 	doneTime := "??:??"
 	if updated.DoneAt != nil {
-		doneTime = updated.DoneAt.Format("15:04")
+		doneTime = updated.DoneAt.In(loc).Format("15:04")
 	}
 
 	// Ответ: записано
