@@ -1,107 +1,97 @@
 package domain
 
 import (
-	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/a3bremind/a3bremindbot/internal/store"
 )
 
-// processPending finds all pending instances and sends notifications as needed.
-func (s *Scheduler) processPending(now time.Time) {
-	instances, err := store.GetPending(s.db, now)
+// processPending finds all pending instances and returns notifications to send.
+func (e *Engine) processPending(now time.Time) []Notification {
+	instances, err := store.GetPending(e.db, now)
 	if err != nil {
 		slog.Error("get pending instances", "error", err)
-		return
+		return nil
 	}
 
+	var notifications []Notification
 	for _, inst := range instances {
-		s.processInstance(inst, now)
+		n := e.processInstance(inst, now)
+		if n != nil {
+			notifications = append(notifications, *n)
+		}
 	}
+	return notifications
 }
 
-// processInstance handles a single pending instance.
-func (s *Scheduler) processInstance(inst store.ReminderInstance, now time.Time) {
-	reminder, err := store.GetByID(s.db, inst.ReminderID)
+// processInstance checks a single pending instance.
+// Returns a Notification if a message should be sent, nil otherwise.
+func (e *Engine) processInstance(inst store.ReminderInstance, now time.Time) *Notification {
+	reminder, err := store.GetByID(e.db, inst.ReminderID)
 	if err != nil {
 		slog.Error("get reminder", "reminder_id", inst.ReminderID, "error", err)
-		return
+		return nil
 	}
 
-	user, err := store.GetUserByID(s.db, reminder.UserID)
+	user, err := store.GetUserByID(e.db, reminder.UserID)
 	if err != nil {
 		slog.Error("get user", "user_id", reminder.UserID, "error", err)
-		return
+		return nil
 	}
 
 	// Check paused
 	if user.Paused {
-		return
+		return nil
 	}
 
 	msgCount := len(inst.MessageIDs)
 
-	var text string
+	var n Notification
 
 	switch {
 	case msgCount == 0:
-		// First notification — format time in user's timezone.
-		scheduledStr := inst.ScheduledAt.Format("15:04")
-		if user.Timezone != "" {
-			loc, err := time.LoadLocation(user.Timezone)
-			if err == nil {
-				scheduledStr = inst.ScheduledAt.In(loc).Format("15:04")
-			}
+		// First notification.
+		n = Notification{
+			InstanceID:     inst.ID,
+			ReminderID:     inst.ReminderID,
+			Label:          reminder.Label,
+			ScheduledAt:    inst.ScheduledAt,
+			Attempt:        1,
+			MaxAttempts:    RepeatCount,
+			Type:           NotificationFirst,
+			UserID:         user.ID,
+			RecipientID:    user.TelegramID,
+			Timezone:       user.Timezone,
+			ReminderRepeat: reminder.Repeat,
 		}
-		text = fmt.Sprintf("⏰ %s · %s", scheduledStr, reminder.Label)
 
 	case msgCount < RepeatCount:
 		// Repeat notification — only if enough time has passed.
 		lastEntry := inst.MessageIDs[msgCount-1]
 		lastSentAt := time.Unix(lastEntry.SentAt, 0)
 		if now.Sub(lastSentAt) < RepeatInterval {
-			return // too early, skip this tick
+			return nil // too early, skip this tick
 		}
 		attempt := msgCount + 1
-		text = fmt.Sprintf("🔔 Напоминаю: %s (попытка %d/%d)", reminder.Label, attempt, RepeatCount)
+		n = Notification{
+			InstanceID:     inst.ID,
+			ReminderID:     inst.ReminderID,
+			Label:          reminder.Label,
+			ScheduledAt:    inst.ScheduledAt,
+			Attempt:        attempt,
+			MaxAttempts:    RepeatCount,
+			Type:           NotificationRepeat,
+			UserID:         user.ID,
+			RecipientID:    user.TelegramID,
+			Timezone:       user.Timezone,
+			ReminderRepeat: reminder.Repeat,
+		}
 
 	default:
 		// Already >= RepeatCount notifications sent — nothing to do.
-		return
+		return nil
 	}
 
-	// Send the notification.
-	messageID, sentAt, err := s.notifier.SendMessage(user.TelegramID, text)
-	if err != nil {
-		slog.Error("send message", "telegram_id", user.TelegramID, "error", err)
-		return
-	}
-
-	// Record the reply mapping (reply_message_id -> instance_id).
-	if err := store.InsertInstanceReply(s.db, messageID, inst.ID); err != nil {
-		slog.Error("insert instance reply", "message_id", messageID, "instance_id", inst.ID, "error", err)
-		return
-	}
-
-	// Record the sent message.
-	if msgCount+1 >= RepeatCount {
-		// Last notification — atomically add message ID and mark as missed.
-		if reminder.Repeat == "once" {
-			if err := store.AddMessageIDAndMarkMissedDeleteOnce(s.db, inst.ID, reminder.ID, messageID, sentAt); err != nil {
-				slog.Error("add message id and mark missed delete once", "instance_id", inst.ID, "error", err)
-				return
-			}
-		} else {
-			if err := store.AddMessageIDAndSetMissed(s.db, inst.ID, messageID, sentAt); err != nil {
-				slog.Error("add message id and set missed", "instance_id", inst.ID, "error", err)
-			}
-		}
-	} else {
-		// Not the last repeat — just add the message ID.
-		if err := store.AddMessageID(s.db, inst.ID, messageID, sentAt); err != nil {
-			slog.Error("add message id", "instance_id", inst.ID, "error", err)
-			return
-		}
-	}
+	return &n
 }

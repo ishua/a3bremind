@@ -1,12 +1,15 @@
 package bot
 
 import (
+	"fmt"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/a3bremind/a3bremindbot/internal/domain"
 )
 
-// Notifier реализует domain.Notifier через Telegram Bot API.
+// Notifier реализует scheduler.Notifier через Telegram Bot API.
+// Формирует текст из структурированных domain.Notification.
 type Notifier struct {
 	bot BotAPI
 }
@@ -15,13 +18,39 @@ func NewNotifier(bot BotAPI) *Notifier {
 	return &Notifier{bot: bot}
 }
 
-// SendMessage отправляет текстовое сообщение пользователю через Telegram.
-// Возвращает messageID, время отправки и ошибку.
-func (n *Notifier) SendMessage(telegramID int64, text string) (int, time.Time, error) {
-	msg := tgbotapi.NewMessage(telegramID, text)
+// Notify отправляет структурированное уведомление пользователю через Telegram.
+func (n *Notifier) Notify(recipientID int64, notification domain.Notification) (int, time.Time, error) {
+	text := formatNotificationText(notification)
+	msg := tgbotapi.NewMessage(recipientID, text)
 	sent, err := n.bot.Send(msg)
 	if err != nil {
 		return 0, time.Time{}, err
 	}
 	return sent.MessageID, time.Now(), nil
+}
+
+// formatNotificationText формирует читаемый текст из Notification.
+func formatNotificationText(notification domain.Notification) string {
+	switch notification.Type {
+	case domain.NotificationFirst:
+		return fmt.Sprintf("⏰ %s · %s",
+			formatTimeInTimezone(notification.ScheduledAt, notification.Timezone),
+			notification.Label)
+	case domain.NotificationRepeat:
+		return fmt.Sprintf("🔔 Напоминаю: %s (попытка %d/%d)",
+			notification.Label, notification.Attempt, notification.MaxAttempts)
+	default:
+		return notification.Label
+	}
+}
+
+func formatTimeInTimezone(t time.Time, timezone string) string {
+	if timezone == "" {
+		return t.Format("15:04")
+	}
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		return t.Format("15:04")
+	}
+	return t.In(loc).Format("15:04")
 }

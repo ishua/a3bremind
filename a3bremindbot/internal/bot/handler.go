@@ -8,7 +8,7 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/a3bremind/a3bremindbot/internal/domain"
+	"github.com/a3bremind/a3bremindbot/internal/scheduler"
 )
 
 // BotAPI — минимальный интерфейс для отправки сообщений через Telegram API.
@@ -26,13 +26,13 @@ type pendingConfirmEntry struct {
 type Handler struct {
 	db             *sql.DB
 	bot            BotAPI
-	scheduler      *domain.Scheduler
+	scheduler      *scheduler.Scheduler
 	version        string
 	pendingConfirm sync.Map // chatID (int64) -> pendingConfirmEntry
 }
 
 // NewHandler создаёт Handler.
-func NewHandler(db *sql.DB, bot BotAPI, scheduler *domain.Scheduler, version string) *Handler {
+func NewHandler(db *sql.DB, bot BotAPI, scheduler *scheduler.Scheduler, version string) *Handler {
 	return &Handler{
 		db:        db,
 		bot:       bot,

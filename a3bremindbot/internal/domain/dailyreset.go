@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"database/sql"
 	"fmt"
 	"log/slog"
 	"time"
@@ -10,13 +9,13 @@ import (
 )
 
 // DailyReset creates instances for all daily reminders of a user for today.
-func DailyReset(db *sql.DB, userID string, now time.Time) error {
-	reminders, err := store.GetAll(db, userID)
+func (e *Engine) DailyReset(userID string, now time.Time) error {
+	reminders, err := store.GetAll(e.db, userID)
 	if err != nil {
 		return fmt.Errorf("get reminders for daily reset: %w", err)
 	}
 
-	user, err := store.GetUserByID(db, userID)
+	user, err := store.GetUserByID(e.db, userID)
 	if err != nil {
 		return fmt.Errorf("get user for daily reset: %w", err)
 	}
@@ -37,7 +36,6 @@ func DailyReset(db *sql.DB, userID string, now time.Time) error {
 			continue
 		}
 
-		// Parse the first time of the day.
 		firstTime := r.Times[0]
 		scheduledAt, err := time.ParseInLocation("15:04", firstTime, loc)
 		if err != nil {
@@ -45,7 +43,6 @@ func DailyReset(db *sql.DB, userID string, now time.Time) error {
 			continue
 		}
 
-		// Combine today's date with the first time.
 		instanceTime := time.Date(
 			todayStart.Year(), todayStart.Month(), todayStart.Day(),
 			scheduledAt.Hour(), scheduledAt.Minute(), 0, 0,
@@ -60,14 +57,13 @@ func DailyReset(db *sql.DB, userID string, now time.Time) error {
 			Status:      "pending",
 		}
 
-		if _, err := store.CreateInstance(db, inst); err != nil {
+		if _, err := store.CreateInstance(e.db, inst); err != nil {
 			slog.Error("daily reset: create instance", "reminder_id", r.ID, "error", err)
 			continue
 		}
 	}
 
-	// Update last_reset_at.
-	if err := store.SetLastResetAt(db, userID, now); err != nil {
+	if err := store.SetLastResetAt(e.db, userID, now); err != nil {
 		return fmt.Errorf("set last_reset_at: %w", err)
 	}
 
@@ -75,8 +71,8 @@ func DailyReset(db *sql.DB, userID string, now time.Time) error {
 }
 
 // checkDailyReset checks if any user needs a daily reset and triggers it.
-func (s *Scheduler) checkDailyReset(now time.Time) {
-	users, err := store.GetAllUsers(s.db)
+func (e *Engine) checkDailyReset(now time.Time) {
+	users, err := store.GetAllUsers(e.db)
 	if err != nil {
 		slog.Error("get all users for daily reset", "error", err)
 		return
@@ -95,24 +91,21 @@ func (s *Scheduler) checkDailyReset(now time.Time) {
 
 		localNow := now.In(loc)
 
-		// Only trigger at the reset hour, minute 0.
 		if localNow.Hour() != ResetHour || localNow.Minute() != 0 {
 			continue
 		}
 
-		// Check if already reset today (in user's timezone).
 		today := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, loc)
 
 		if user.LastResetAt != nil {
 			lastResetLocal := user.LastResetAt.In(loc)
 			lastResetDay := time.Date(lastResetLocal.Year(), lastResetLocal.Month(), lastResetLocal.Day(), 0, 0, 0, 0, loc)
 			if !lastResetDay.Before(today) {
-				// Already reset today.
 				continue
 			}
 		}
 
-		if err := DailyReset(s.db, user.ID, now); err != nil {
+		if err := e.DailyReset(user.ID, now); err != nil {
 			slog.Error("daily reset for user", "user_id", user.ID, "error", err)
 		}
 	}

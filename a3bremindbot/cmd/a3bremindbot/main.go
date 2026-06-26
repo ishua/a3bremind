@@ -7,6 +7,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/a3bremind/a3bremindbot/internal/bot"
 	"github.com/a3bremind/a3bremindbot/internal/domain"
+	"github.com/a3bremind/a3bremindbot/internal/scheduler"
 	"github.com/a3bremind/a3bremindbot/internal/store"
 )
 
@@ -42,11 +43,12 @@ func main() {
 	}
 
 	notifier := bot.NewNotifier(botAPI)
-	scheduler := domain.New(db, notifier)
-	scheduler.Start()
-	defer scheduler.Stop()
+	engine := domain.NewEngine(db)
+	sched := scheduler.New(engine, notifier)
+	sched.Start()
+	defer sched.Stop()
 
-	handler := bot.NewHandler(db, botAPI, scheduler, version)
+	handler := bot.NewHandler(db, botAPI, sched, version)
 
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60

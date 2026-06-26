@@ -13,6 +13,7 @@ import (
 
 	"github.com/a3bremind/a3bremindbot/internal/bot"
 	"github.com/a3bremind/a3bremindbot/internal/domain"
+	"github.com/a3bremind/a3bremindbot/internal/scheduler"
 	"github.com/a3bremind/a3bremindbot/internal/store"
 )
 
@@ -56,7 +57,8 @@ func setup(t *testing.T) (*sql.DB, *mockBot, *bot.Handler) {
 	t.Helper()
 	db := newTestDB(t)
 	mock := &mockBot{}
-	s := domain.New(db, bot.NewNotifier(mock))
+	engine := domain.NewEngine(db)
+	s := scheduler.New(engine, bot.NewNotifier(mock))
 	t.Cleanup(s.Stop)
 	h := bot.NewHandler(db, mock, s, "test")
 	return db, mock, h
