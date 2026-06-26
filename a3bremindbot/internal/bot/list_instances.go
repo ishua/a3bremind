@@ -23,13 +23,13 @@ func (h *Handler) handleListInstances(update tgbotapi.Update) {
 	text := strings.TrimSpace(update.Message.Text)
 	parts := strings.Fields(text)
 	if len(parts) < 3 {
-		h.sendText(update.Message.Chat.ID, "Использование: `/list instances <reminder_id>`")
+		h.sendText(update.Message.Chat.ID, "Использование: /list instances <reminder_id>")
 		return
 	}
 	reminderID := parts[2]
 
 	if user.Timezone == "" {
-		h.sendText(update.Message.Chat.ID, "Сначала укажи часовой пояс: `/settings timezone Europe/Berlin`")
+		h.sendText(update.Message.Chat.ID, "Сначала укажи часовой пояс: /settings timezone Europe/Berlin")
 		return
 	}
 
@@ -106,5 +106,5 @@ func (h *Handler) handleListInstances(update tgbotapi.Update) {
 		sb.WriteString(fmt.Sprintf("  `/done %s %s`\n", inst.ID, scheduledStr))
 	}
 
-	h.sendText(update.Message.Chat.ID, strings.TrimSpace(sb.String()))
+	h.sendMarkdown(update.Message.Chat.ID, strings.TrimSpace(sb.String()))
 }
