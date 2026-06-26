@@ -11,6 +11,12 @@ import (
 )
 
 func main() {
+	version := os.Getenv("APP_VERSION")
+	if version == "" {
+		version = "dev"
+	}
+	slog.Info("starting a3bremindbot", "version", version)
+
 	token := os.Getenv("TELEGRAM_BOT_TOKEN")
 	if token == "" {
 		slog.Error("TELEGRAM_BOT_TOKEN is not set")
