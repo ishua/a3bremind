@@ -177,6 +177,9 @@ func GetLastByReminder(db *sql.DB, reminderID string, timeIndex int) (ReminderIn
 
 // SetStatus updates the status of a reminder instance.
 // If status is "done", done_at is also set to the current time.
+// If status is "missed", the update is conditional on the current status being "pending"
+// to prevent races with the done handler. If the instance is already in a non-pending
+// state, the update is silently skipped (no-op).
 func SetStatus(db *sql.DB, id string, status string) error {
 	now := time.Now().Unix()
 
@@ -185,6 +188,16 @@ func SetStatus(db *sql.DB, id string, status string) error {
 	if status == "done" {
 		query = `UPDATE reminder_instances SET status = ?, done_at = ?, updated_at = ? WHERE id = ?`
 		args = []any{status, now, now, id}
+	} else if status == "missed" {
+		// Only mark as missed if still pending — prevents race with done handler.
+		query = `UPDATE reminder_instances SET status = ?, updated_at = ? WHERE id = ? AND status = 'pending'`
+		args = []any{status, now, id}
+		_, err := db.Exec(query, args...)
+		if err != nil {
+			return fmt.Errorf("set status: %w", err)
+		}
+		// 0 rows affected is not an error — instance was already handled (e.g. done).
+		return nil
 	} else {
 		query = `UPDATE reminder_instances SET status = ?, updated_at = ? WHERE id = ?`
 		args = []any{status, now, id}
@@ -231,6 +244,52 @@ func SetStatusWithDoneAt(db *sql.DB, id string, status string, doneAt time.Time)
 		return fmt.Errorf("set status with done_at: %w", err)
 	}
 	return checkRowsAffected(res, "reminder_instance", id)
+}
+
+// MarkMissedAndDeleteOnce atomically marks an instance as "missed" and deletes all instances
+// and the reminder itself in a single transaction. Intended for once-reminders to prevent
+// race conditions between the scheduler and the done handler.
+func MarkMissedAndDeleteOnce(db *sql.DB, instanceID, reminderID string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// SetStatus("missed") — only if still pending (conditional update prevents race).
+	now := time.Now().Unix()
+	res, err := tx.Exec(`UPDATE reminder_instances SET status = 'missed', updated_at = ? WHERE id = ? AND status = 'pending'`, now, instanceID)
+	if err != nil {
+		return fmt.Errorf("set status missed: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		// Instance was already handled by done handler — rollback silently.
+		return nil
+	}
+
+	// Delete all instances for this reminder.
+	if _, err := tx.Exec(`DELETE FROM reminder_instances WHERE reminder_id = ?`, reminderID); err != nil {
+		return fmt.Errorf("delete reminder instances: %w", err)
+	}
+
+	// Delete the reminder itself.
+	res, err = tx.Exec(`DELETE FROM reminders WHERE id = ?`, reminderID)
+	if err != nil {
+		return fmt.Errorf("delete reminder: %w", err)
+	}
+	n, err = res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("reminder %q not found", reminderID)
+	}
+
+	return tx.Commit()
 }
 
 // AddMessageID appends a MessageIDEntry to the instance's message_ids JSON array atomically via json_set.

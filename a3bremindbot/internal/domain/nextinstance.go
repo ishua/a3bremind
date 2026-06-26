@@ -13,7 +13,7 @@ import (
 // It returns a warning if the rescheduled time exceeds midnight.
 // It does nothing if the current instance is at the last time_index.
 // It should only be called for instances with status "done" or "skipped", not "missed".
-func NextInstance(db *sql.DB, inst store.ReminderInstance) (warning string, err error) {
+func NextInstance(db *sql.DB, inst store.ReminderInstance, now time.Time) (warning string, err error) {
 	reminder, err := store.GetByID(db, inst.ReminderID)
 	if err != nil {
 		return "", fmt.Errorf("get reminder for next instance: %w", err)
@@ -37,7 +37,7 @@ func NextInstance(db *sql.DB, inst store.ReminderInstance) (warning string, err 
 		return "", fmt.Errorf("load location %q: %w", user.Timezone, err)
 	}
 
-	now := time.Now().In(loc)
+	now = now.In(loc)
 	nextTime := reminder.Times[nextIndex]
 
 	scheduledAt, err := time.ParseInLocation("15:04", nextTime, loc)
@@ -65,7 +65,7 @@ func NextInstance(db *sql.DB, inst store.ReminderInstance) (warning string, err 
 
 	// Apply reschedule if MinGap is set and DoneAt is available.
 	if reminder.MinGap != nil && inst.DoneAt != nil {
-		adjusted, rescheduleWarning := Reschedule(reminder, *inst.DoneAt, inst.TimeIndex, loc)
+		adjusted, rescheduleWarning := Reschedule(reminder, *inst.DoneAt, inst.TimeIndex, loc, now)
 		if len(adjusted) > 0 {
 			// The first adjusted time corresponds to nextIndex (fromIndex+1).
 			if err := store.SetInstanceScheduledAt(db, created.ID, adjusted[0]); err != nil {

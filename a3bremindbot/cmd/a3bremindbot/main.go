@@ -20,6 +20,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("init db: %v", err)
 	}
+	db.SetMaxOpenConns(1)
 	defer db.Close()
 
 	botAPI, err := tgbotapi.NewBotAPI(token)

@@ -126,7 +126,7 @@ func (h *Handler) handleConfirmDoneTime(update tgbotapi.Update) {
 	}
 
 	// NextInstance
-	warning, err := domain.NextInstance(h.db, updated)
+	warning, err := domain.NextInstance(h.db, updated, time.Now())
 	if err != nil {
 		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
 		return

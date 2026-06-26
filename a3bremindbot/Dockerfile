@@ -10,7 +10,4 @@ RUN apk add -U tzdata
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build /build/app /app
 
-
-ENV TELEGRAM_BOT_TOKEN=""
-
 ENTRYPOINT ["/app"]

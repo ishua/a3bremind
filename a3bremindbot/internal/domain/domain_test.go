@@ -419,7 +419,8 @@ func TestNextInstance_NextInChain(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create next instance.
-	_, err = NextInstance(db, inst)
+	_, err = NextInstance(db, inst, now)
+
 	require.NoError(t, err)
 
 	// Should have created an instance with time_index=1.
@@ -450,7 +451,7 @@ func TestNextInstance_LastIndex(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = NextInstance(db, inst)
+	_, err = NextInstance(db, inst, now)
 	require.NoError(t, err)
 
 	// No new instance should be created.
@@ -478,7 +479,8 @@ func TestReschedule_ShiftsForward(t *testing.T) {
 		MinGap: &minGap,
 	}
 
-	adjusted, warning := Reschedule(reminder, doneAt, 0, loc)
+	now := time.Date(2026, 6, 25, 9, 0, 0, 0, loc)
+	adjusted, warning := Reschedule(reminder, doneAt, 0, loc, now)
 	assert.Empty(t, warning)
 	require.Len(t, adjusted, 2)
 
@@ -499,7 +501,7 @@ func TestReschedule_NoShiftNeeded(t *testing.T) {
 		MinGap: &minGap,
 	}
 
-	adjusted, warning := Reschedule(reminder, doneAt, 0, loc)
+	adjusted, warning := Reschedule(reminder, doneAt, 0, loc, doneAt)
 	assert.Empty(t, warning)
 	require.Len(t, adjusted, 2)
 
@@ -516,7 +518,8 @@ func TestReschedule_NilMinGap(t *testing.T) {
 	}
 
 	doneAt := time.Date(2026, 6, 25, 6, 0, 0, 0, loc)
-	adjusted, warning := Reschedule(reminder, doneAt, 0, loc)
+	now := time.Date(2026, 6, 25, 6, 0, 0, 0, loc)
+	adjusted, warning := Reschedule(reminder, doneAt, 0, loc, now)
 	assert.Empty(t, warning)
 	require.Len(t, adjusted, 2)
 
@@ -539,7 +542,7 @@ func TestReschedule_LastPastMidnight(t *testing.T) {
 		MinGap: &minGap,
 	}
 
-	adjusted, warning := Reschedule(reminder, doneAt, 1, loc)
+	adjusted, warning := Reschedule(reminder, doneAt, 1, loc, doneAt)
 	require.Len(t, adjusted, 1)
 	assert.NotEmpty(t, warning)
 	assert.Contains(t, warning, "полночь")
@@ -577,7 +580,7 @@ func TestNextInstance_WithReschedule(t *testing.T) {
 	require.NoError(t, err)
 
 	// Call NextInstance — should create time_index=1 with adjusted time
-	_, err = NextInstance(db, inst)
+	_, err = NextInstance(db, inst, now)
 	require.NoError(t, err)
 
 	// Should have created an instance with time_index=1
@@ -619,10 +622,170 @@ func TestNextInstance_RescheduleWarning(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	warning, err := NextInstance(db, inst)
+	warning, err := NextInstance(db, inst, now)
 	require.NoError(t, err)
 	assert.NotEmpty(t, warning)
 	assert.Contains(t, warning, "полночь")
+}
+
+// ---------------------------------------------------------------------------
+// Race condition tests
+// ---------------------------------------------------------------------------
+
+func TestProcessPending_RaceWithDone(t *testing.T) {
+	// Simulate the scheduler checking the fresh instance status in processInstance.
+	// After sending the last notification, processInstance re-reads the status.
+	// If done handler already ran, the status should be "done" and scheduler skips marking as missed.
+	resetGlobals()
+	RepeatCount = 2
+	RepeatInterval = 1 * time.Millisecond
+	defer resetGlobals()
+
+	db, _, _ := setup(t)
+
+	u := createTestUser(t, db, 105, "UTC")
+	r := createTestReminder(t, db, u.ID, "Race test", []string{"09:00"}, "daily")
+
+	now := time.Now().Truncate(time.Second)
+	past := now.Add(-1 * time.Hour)
+
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   0,
+		ScheduledAt: past,
+		Status:      "pending",
+	})
+	require.NoError(t, err)
+
+	// Add RepeatCount-1 entries so processInstance would try to mark as missed.
+	oldSentAt := now.Add(-2 * RepeatInterval)
+	err = store.AddMessageID(db, inst.ID, 1, oldSentAt)
+	require.NoError(t, err)
+
+	// Simulate done handler running before scheduler's SetStatus("missed").
+	err = store.SetStatus(db, inst.ID, "done")
+	require.NoError(t, err)
+
+	// Now try to set missed — the store guard (AND status = 'pending') should prevent overwrite.
+	err = store.SetStatus(db, inst.ID, "missed")
+	require.NoError(t, err)
+
+	// Status should remain "done".
+	got, err := store.GetInstanceByID(db, inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "done", got.Status)
+}
+
+func TestProcessPending_RaceWithDoneOnceReminder(t *testing.T) {
+	// Same race but with a "once" reminder.
+	resetGlobals()
+	RepeatCount = 2
+	RepeatInterval = 1 * time.Millisecond
+	defer resetGlobals()
+
+	db, _, s := setup(t)
+
+	u := createTestUser(t, db, 106, "UTC")
+	r := createTestReminder(t, db, u.ID, "Race once", []string{"09:00"}, "once")
+
+	now := time.Now().Truncate(time.Second)
+	past := now.Add(-1 * time.Hour)
+
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   0,
+		ScheduledAt: past,
+		Status:      "pending",
+	})
+	require.NoError(t, err)
+
+	oldSentAt := now.Add(-2 * RepeatInterval)
+	err = store.AddMessageID(db, inst.ID, 1, oldSentAt)
+	require.NoError(t, err)
+
+	// Simulate done handler running before scheduler.
+	err = store.SetStatus(db, inst.ID, "done")
+	require.NoError(t, err)
+
+	// Tick: processInstance re-reads status, sees "done", skips MarkMissedAndDeleteOnce.
+	Tick(s, now)
+
+	// Reminder and instance should still exist (not deleted).
+	reminder, err := store.GetByID(db, r.ID)
+	require.NoError(t, err)
+	assert.Equal(t, r.ID, reminder.ID)
+
+	got, err := store.GetInstanceByID(db, inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "done", got.Status)
+}
+
+func TestMarkMissedAndDeleteOnce_Transaction(t *testing.T) {
+	resetGlobals()
+	db, _, _ := setup(t)
+
+	u := createTestUser(t, db, 107, "UTC")
+	r := createTestReminder(t, db, u.ID, "Tx once", []string{"09:00"}, "once")
+
+	now := time.Now().Truncate(time.Second)
+	past := now.Add(-1 * time.Hour)
+
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   0,
+		ScheduledAt: past,
+		Status:      "pending",
+	})
+	require.NoError(t, err)
+
+	// Call MarkMissedAndDeleteOnce directly.
+	err = store.MarkMissedAndDeleteOnce(db, inst.ID, r.ID)
+	require.NoError(t, err)
+
+	// Instance should be gone.
+	_, err = store.GetInstanceByID(db, inst.ID)
+	assert.ErrorContains(t, err, "not found")
+
+	// Reminder should be gone.
+	_, err = store.GetByID(db, r.ID)
+	assert.ErrorContains(t, err, "not found")
+}
+
+func TestMarkMissedAndDeleteOnce_AlreadyDone(t *testing.T) {
+	// If the instance is already "done", MarkMissedAndDeleteOnce should do nothing.
+	resetGlobals()
+	db, _, _ := setup(t)
+
+	u := createTestUser(t, db, 108, "UTC")
+	r := createTestReminder(t, db, u.ID, "Tx already done", []string{"09:00"}, "once")
+
+	now := time.Now().Truncate(time.Second)
+	past := now.Add(-1 * time.Hour)
+
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		TimeIndex:   0,
+		ScheduledAt: past,
+		Status:      "pending",
+	})
+	require.NoError(t, err)
+
+	// Done handler runs first.
+	err = store.SetStatus(db, inst.ID, "done")
+	require.NoError(t, err)
+
+	// Now scheduler tries MarkMissedAndDeleteOnce — should do nothing.
+	err = store.MarkMissedAndDeleteOnce(db, inst.ID, r.ID)
+	require.NoError(t, err)
+
+	// Instance should still exist with "done".
+	got, err := store.GetInstanceByID(db, inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "done", got.Status)
+
+	// Reminder should still exist.
+	_, err = store.GetByID(db, r.ID)
+	require.NoError(t, err)
 }
 
 // ---------------------------------------------------------------------------
@@ -658,7 +821,7 @@ func TestIntegration_ProcessPending_NextInstance(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create next instance.
-	_, err = NextInstance(db, inst)
+	_, err = NextInstance(db, inst, now)
 	require.NoError(t, err)
 
 	// Next instance should be at time_index=1.

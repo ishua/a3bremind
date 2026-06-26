@@ -2,6 +2,7 @@ package bot
 
 import (
 	"fmt"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/a3bremind/a3bremindbot/internal/domain"
@@ -46,7 +47,7 @@ func (h *Handler) handleSkip(update tgbotapi.Update) {
 
 	// NextInstance: создаёт следующий в цепочке, если есть
 	// DoneAt == nil → рескедул не применяется, это правильно для skip
-	_, err = domain.NextInstance(h.db, updated)
+	_, err = domain.NextInstance(h.db, updated, time.Now())
 	if err != nil {
 		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
 		return

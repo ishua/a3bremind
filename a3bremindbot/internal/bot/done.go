@@ -73,7 +73,7 @@ func (h *Handler) handleDone(update tgbotapi.Update) {
 	}
 
 	// NextInstance: создаём следующий в цепочке, если есть
-	warning, err := domain.NextInstance(h.db, updated)
+	warning, err := domain.NextInstance(h.db, updated, time.Now())
 	if err != nil {
 		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
 		return
@@ -101,13 +101,14 @@ func (h *Handler) sendRescheduleNotification(chatID int64, user store.User, remi
 	}
 
 	// Вычисляем adjusted times с помощью domain.Reschedule
-	adjusted, _ := domain.Reschedule(reminder, *doneInst.DoneAt, doneInst.TimeIndex, loc)
+	now := time.Now()
+	adjusted, _ := domain.Reschedule(reminder, *doneInst.DoneAt, doneInst.TimeIndex, loc, now)
 	if len(adjusted) == 0 {
 		return
 	}
 
 	// Проверяем, сдвинулось ли хотя бы одно время относительно исходного
-	now := time.Now().In(loc)
+	now = now.In(loc)
 	hasShift := false
 	adjustedStrs := make([]string, len(adjusted))
 	for i, adj := range adjusted {

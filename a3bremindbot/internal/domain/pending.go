@@ -80,19 +80,27 @@ func (s *Scheduler) processInstance(inst store.ReminderInstance, now time.Time) 
 
 	// If this was the last repeat, mark as missed.
 	if msgCount+1 >= RepeatCount {
-		if err := store.SetStatus(s.db, inst.ID, "missed"); err != nil {
-			log.Printf("set status missed for instance %s: %v", inst.ID, err)
+		// Re-read fresh status to avoid race with done handler.
+		freshInst, err := store.GetInstanceByID(s.db, inst.ID)
+		if err != nil {
+			log.Printf("get fresh instance %s: %v", inst.ID, err)
+			return
+		}
+		if freshInst.Status != "pending" {
+			// Already handled by done handler — nothing to do.
+			return
 		}
 
-		// If the reminder is "once", delete it and all its instances
+		// If the reminder is "once", delete it and all its instances atomically.
 		if reminder.Repeat == "once" {
-			if err := store.DeleteReminderInstances(s.db, reminder.ID); err != nil {
-				log.Printf("delete instances for once reminder %s: %v", reminder.ID, err)
+			if err := store.MarkMissedAndDeleteOnce(s.db, inst.ID, reminder.ID); err != nil {
+				log.Printf("mark missed and delete once reminder %s: %v", reminder.ID, err)
 			}
-			if err := store.Delete(s.db, reminder.ID); err != nil {
-				log.Printf("delete once reminder %s: %v", reminder.ID, err)
-			}
-			log.Printf("once reminder %s (%s) deleted after missed", reminder.ID, reminder.Label)
+			return
+		}
+
+		if err := store.SetStatus(s.db, inst.ID, "missed"); err != nil {
+			log.Printf("set status missed for instance %s: %v", inst.ID, err)
 		}
 	}
 }

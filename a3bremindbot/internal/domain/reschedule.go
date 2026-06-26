@@ -8,10 +8,11 @@ import (
 )
 
 // Reschedule computes adjusted times for remaining instances in a series
-// based on the actual doneAt time and the minGap constraint.
-// It returns the adjusted times relative to today in the given location,
+// based on the actual doneAt time, the minGap constraint, and the current time (now).
+// It returns the adjusted times relative to now in the given location,
 // and a warning if the last adjusted time exceeds midnight.
-func Reschedule(reminder store.Reminder, doneAt time.Time, fromIndex int, loc *time.Location) (adjustedTimes []time.Time, warning string) {
+func Reschedule(reminder store.Reminder, doneAt time.Time, fromIndex int, loc *time.Location, now time.Time) (adjustedTimes []time.Time, warning string) {
+	now = now.In(loc)
 	// All times from fromIndex+1 onward
 	remaining := reminder.Times[fromIndex+1:]
 	if len(remaining) == 0 {
@@ -20,7 +21,6 @@ func Reschedule(reminder store.Reminder, doneAt time.Time, fromIndex int, loc *t
 
 	if reminder.MinGap == nil {
 		// No gap constraint — return original times converted to time.Time for today.
-		now := time.Now().In(loc)
 		times := make([]time.Time, len(remaining))
 		for i, tStr := range remaining {
 			parsed, _ := time.ParseInLocation("15:04", tStr, loc)
@@ -33,7 +33,6 @@ func Reschedule(reminder store.Reminder, doneAt time.Time, fromIndex int, loc *t
 		return times, ""
 	}
 
-	now := time.Now().In(loc)
 	minGap := time.Duration(*reminder.MinGap) * time.Minute
 	times := make([]time.Time, len(remaining))
 

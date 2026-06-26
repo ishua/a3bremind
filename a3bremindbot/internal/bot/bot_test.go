@@ -196,7 +196,7 @@ func TestHandleDone_RescheduleNotification(t *testing.T) {
 	err = store.SetTimezone(db, user.ID, "UTC")
 	require.NoError(t, err)
 
-	minGap := 60
+	minGap := 600 // 10h — large enough that shift always occurs regardless of current time
 	r, err := store.Create(db, store.Reminder{
 		UserID: user.ID,
 		Label:  "Gap test",
@@ -206,7 +206,7 @@ func TestHandleDone_RescheduleNotification(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// done at ~17:28, min_gap=1h (60min) → 11:00 shifts to 18:28 → notification should appear
+	// Schedule instance at past time.
 	doneAt := time.Now().Add(-30 * time.Minute).Truncate(time.Second)
 	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
@@ -236,7 +236,7 @@ func TestHandleDone_RescheduleNotification(t *testing.T) {
 	require.GreaterOrEqual(t, len(mock.sent), 2)
 	assert.Contains(t, mock.sent[0].Text, "✅")
 
-	// Check if 📅 was sent — depends on whether time actually shifted
+	// Check if 📅 was sent — shift should always happen with 10h gap
 	var hasSchedule bool
 	for _, msg := range mock.sent {
 		if strings.Contains(msg.Text, "📅") {
@@ -244,8 +244,6 @@ func TestHandleDone_RescheduleNotification(t *testing.T) {
 			break
 		}
 	}
-	// If done at 09:30 with minGap=60min, 11:00 → earliestNext = 10:30, which is < 11:00 → shift
-	// So notification should be present
 	assert.True(t, hasSchedule, "expected 📅 notification")
 }
 
