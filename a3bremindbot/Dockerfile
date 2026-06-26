@@ -7,6 +7,7 @@ ENV CGO_ENABLED=0 GOOS=linux
 RUN go build -ldflags '-extldflags "-static"' -o app ./cmd/a3bremindbot
 
 FROM alpine:3.23
+ARG APP_VERSION=dev
 RUN apk add -U tzdata
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build /build/app /app

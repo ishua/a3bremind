@@ -1,6 +1,10 @@
 services:
   bot:
     image: a3bremindbot:latest
+    build:
+      context: .
+      args:
+        APP_VERSION: ${APP_VERSION:-dev}
     environment:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - DB_PATH=/data/bot.db
