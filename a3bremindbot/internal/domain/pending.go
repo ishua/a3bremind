@@ -2,7 +2,7 @@ package domain
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/a3bremind/a3bremindbot/internal/store"
@@ -12,7 +12,7 @@ import (
 func (s *Scheduler) processPending(now time.Time) {
 	instances, err := store.GetPending(s.db, now)
 	if err != nil {
-		log.Printf("get pending instances: %v", err)
+		slog.Error("get pending instances", "error", err)
 		return
 	}
 
@@ -25,13 +25,13 @@ func (s *Scheduler) processPending(now time.Time) {
 func (s *Scheduler) processInstance(inst store.ReminderInstance, now time.Time) {
 	reminder, err := store.GetByID(s.db, inst.ReminderID)
 	if err != nil {
-		log.Printf("get reminder %s: %v", inst.ReminderID, err)
+		slog.Error("get reminder", "reminder_id", inst.ReminderID, "error", err)
 		return
 	}
 
 	user, err := store.GetUserByID(s.db, reminder.UserID)
 	if err != nil {
-		log.Printf("get user %s: %v", reminder.UserID, err)
+		slog.Error("get user", "user_id", reminder.UserID, "error", err)
 		return
 	}
 
@@ -68,39 +68,31 @@ func (s *Scheduler) processInstance(inst store.ReminderInstance, now time.Time) 
 	// Send the notification.
 	messageID, sentAt, err := s.notifier.SendMessage(user.TelegramID, text)
 	if err != nil {
-		log.Printf("send message to %d: %v", user.TelegramID, err)
+		slog.Error("send message", "telegram_id", user.TelegramID, "error", err)
 		return
 	}
 
 	// Record the sent message.
-	if err := store.AddMessageID(s.db, inst.ID, messageID, sentAt); err != nil {
-		log.Printf("add message id for instance %s: %v", inst.ID, err)
-		return
-	}
-
-	// If this was the last repeat, mark as missed.
 	if msgCount+1 >= RepeatCount {
-		// Re-read fresh status to avoid race with done handler.
-		freshInst, err := store.GetInstanceByID(s.db, inst.ID)
-		if err != nil {
-			log.Printf("get fresh instance %s: %v", inst.ID, err)
-			return
-		}
-		if freshInst.Status != "pending" {
-			// Already handled by done handler — nothing to do.
-			return
-		}
-
-		// If the reminder is "once", delete it and all its instances atomically.
+		// Last notification — atomically add message ID and mark as missed.
 		if reminder.Repeat == "once" {
-			if err := store.MarkMissedAndDeleteOnce(s.db, inst.ID, reminder.ID); err != nil {
-				log.Printf("mark missed and delete once reminder %s: %v", reminder.ID, err)
+			if err := store.AddMessageID(s.db, inst.ID, messageID, sentAt); err != nil {
+				slog.Error("add message id", "instance_id", inst.ID, "error", err)
+				return
 			}
-			return
+			if err := store.MarkMissedAndDeleteOnce(s.db, inst.ID, reminder.ID); err != nil {
+				slog.Error("mark missed and delete once reminder", "reminder_id", reminder.ID, "error", err)
+			}
+		} else {
+			if err := store.AddMessageIDAndSetMissed(s.db, inst.ID, messageID, sentAt); err != nil {
+				slog.Error("add message id and set missed", "instance_id", inst.ID, "error", err)
+			}
 		}
-
-		if err := store.SetStatus(s.db, inst.ID, "missed"); err != nil {
-			log.Printf("set status missed for instance %s: %v", inst.ID, err)
+	} else {
+		// Not the last repeat — just add the message ID.
+		if err := store.AddMessageID(s.db, inst.ID, messageID, sentAt); err != nil {
+			slog.Error("add message id", "instance_id", inst.ID, "error", err)
+			return
 		}
 	}
 }

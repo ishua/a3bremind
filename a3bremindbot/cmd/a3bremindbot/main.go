@@ -1,7 +1,7 @@
 package main
 
 import (
-	"log"
+	"log/slog"
 	"os"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -13,19 +13,22 @@ import (
 func main() {
 	token := os.Getenv("TELEGRAM_BOT_TOKEN")
 	if token == "" {
-		log.Fatal("TELEGRAM_BOT_TOKEN is not set")
+		slog.Error("TELEGRAM_BOT_TOKEN is not set")
+		os.Exit(1)
 	}
 
 	db, err := store.InitDB("sqlite", "bot.db")
 	if err != nil {
-		log.Fatalf("init db: %v", err)
+		slog.Error("init db", "error", err)
+		os.Exit(1)
 	}
 	db.SetMaxOpenConns(1)
 	defer db.Close()
 
 	botAPI, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
-		log.Fatalf("create bot api: %v", err)
+		slog.Error("create bot api", "error", err)
+		os.Exit(1)
 	}
 
 	notifier := bot.NewNotifier(botAPI)
@@ -40,7 +43,7 @@ func main() {
 
 	updates := botAPI.GetUpdatesChan(u)
 
-	log.Println("Bot started")
+	slog.Info("Bot started")
 
 	for update := range updates {
 		handler.HandleUpdate(update)

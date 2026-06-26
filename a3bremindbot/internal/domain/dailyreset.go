@@ -3,7 +3,7 @@ package domain
 import (
 	"database/sql"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/a3bremind/a3bremindbot/internal/store"
@@ -41,7 +41,7 @@ func DailyReset(db *sql.DB, userID string, now time.Time) error {
 		firstTime := r.Times[0]
 		scheduledAt, err := time.ParseInLocation("15:04", firstTime, loc)
 		if err != nil {
-			log.Printf("daily reset: invalid time %q for reminder %s: %v", firstTime, r.ID, err)
+			slog.Error("daily reset: invalid time", "reminder_id", r.ID, "time", firstTime, "error", err)
 			continue
 		}
 
@@ -60,7 +60,7 @@ func DailyReset(db *sql.DB, userID string, now time.Time) error {
 		}
 
 		if _, err := store.CreateInstance(db, inst); err != nil {
-			log.Printf("daily reset: create instance for reminder %s: %v", r.ID, err)
+			slog.Error("daily reset: create instance", "reminder_id", r.ID, "error", err)
 			continue
 		}
 	}
@@ -77,7 +77,7 @@ func DailyReset(db *sql.DB, userID string, now time.Time) error {
 func (s *Scheduler) checkDailyReset(now time.Time) {
 	users, err := store.GetAllUsers(s.db)
 	if err != nil {
-		log.Printf("get all users for daily reset: %v", err)
+		slog.Error("get all users for daily reset", "error", err)
 		return
 	}
 
@@ -88,7 +88,7 @@ func (s *Scheduler) checkDailyReset(now time.Time) {
 
 		loc, err := time.LoadLocation(user.Timezone)
 		if err != nil {
-			log.Printf("load location for user %s: %v", user.ID, err)
+			slog.Error("load location for user", "user_id", user.ID, "error", err)
 			continue
 		}
 
@@ -112,7 +112,7 @@ func (s *Scheduler) checkDailyReset(now time.Time) {
 		}
 
 		if err := DailyReset(s.db, user.ID, now); err != nil {
-			log.Printf("daily reset for user %s: %v", user.ID, err)
+			slog.Error("daily reset for user", "user_id", user.ID, "error", err)
 		}
 	}
 }

@@ -10,6 +10,14 @@ type scannable interface {
 	Scan(dest ...interface{}) error
 }
 
+// Querier is implemented by *sql.DB and *sql.Tx.
+// It allows store functions to be used in transactions.
+type Querier interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
+}
+
 // checkRowsAffected verifies that exactly one row was affected.
 func checkRowsAffected(res sql.Result, entity, id string) error {
 	n, err := res.RowsAffected()

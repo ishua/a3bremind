@@ -29,7 +29,7 @@ type ReminderInstance struct {
 }
 
 // Create inserts a new reminder instance.
-func CreateInstance(db *sql.DB, i ReminderInstance) (ReminderInstance, error) {
+func CreateInstance(db Querier, i ReminderInstance) (ReminderInstance, error) {
 	if i.ID == "" {
 		i.ID = uuid.New().String()
 	}
@@ -60,7 +60,7 @@ func CreateInstance(db *sql.DB, i ReminderInstance) (ReminderInstance, error) {
 }
 
 // GetInstanceByID retrieves a reminder instance by ID.
-func GetInstanceByID(db *sql.DB, id string) (ReminderInstance, error) {
+func GetInstanceByID(db  Querier , id string) (ReminderInstance, error) {
 	const query = `SELECT id, reminder_id, time_index, scheduled_at, done_at, status, message_ids, created_at, updated_at
 		FROM reminder_instances WHERE id = ?`
 
@@ -69,7 +69,7 @@ func GetInstanceByID(db *sql.DB, id string) (ReminderInstance, error) {
 }
 
 // GetPending retrieves all pending instances whose scheduled_at <= now.
-func GetPending(db *sql.DB, now time.Time) ([]ReminderInstance, error) {
+func GetPending(db  Querier , now time.Time) ([]ReminderInstance, error) {
 	const query = `SELECT id, reminder_id, time_index, scheduled_at, done_at, status, message_ids, created_at, updated_at
 		FROM reminder_instances WHERE scheduled_at <= ? AND status = 'pending'`
 
@@ -83,7 +83,7 @@ func GetPending(db *sql.DB, now time.Time) ([]ReminderInstance, error) {
 }
 
 // GetActiveByUser retrieves all pending instances for a user (for done without reply fallback).
-func GetActiveByUser(db *sql.DB, userID string) ([]ReminderInstance, error) {
+func GetActiveByUser(db  Querier , userID string) ([]ReminderInstance, error) {
 	const query = `SELECT ri.id, ri.reminder_id, ri.time_index, ri.scheduled_at, ri.done_at, ri.status, ri.message_ids, ri.created_at, ri.updated_at
 		FROM reminder_instances ri
 		JOIN reminders r ON r.id = ri.reminder_id
@@ -100,39 +100,20 @@ func GetActiveByUser(db *sql.DB, userID string) ([]ReminderInstance, error) {
 }
 
 // GetInstanceByMessageID retrieves a reminder instance by a message_id (for reply binding).
-func GetInstanceByMessageID(db *sql.DB, messageID int) (ReminderInstance, error) {
-	// We need to scan all instances and find the one containing this message_id,
-	// since message_ids is stored as a JSON array.
-	const query = `SELECT id, reminder_id, time_index, scheduled_at, done_at, status, message_ids, created_at, updated_at
-		FROM reminder_instances`
+// Uses json_each to avoid a full table scan.
+func GetInstanceByMessageID(db  Querier , messageID int) (ReminderInstance, error) {
+	const query = `SELECT ri.id, ri.reminder_id, ri.time_index, ri.scheduled_at, ri.done_at, ri.status, ri.message_ids, ri.created_at, ri.updated_at
+		FROM reminder_instances ri, json_each(ri.message_ids)
+		WHERE json_extract(json_each.value, '$.message_id') = ?
+		LIMIT 1`
 
-	rows, err := db.Query(query)
-	if err != nil {
-		return ReminderInstance{}, fmt.Errorf("get by message_id: %w", err)
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		inst, err := scanReminderInstance(rows)
-		if err != nil {
-			return ReminderInstance{}, err
-		}
-		for _, entry := range inst.MessageIDs {
-			if entry.MessageID == messageID {
-				return inst, nil
-			}
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return ReminderInstance{}, fmt.Errorf("rows iteration: %w", err)
-	}
-
-	return ReminderInstance{}, fmt.Errorf("instance with message_id %d not found", messageID)
+	row := db.QueryRow(query, messageID)
+	return scanReminderInstance(row)
 }
 
 // GetInstancesByUserAndDay retrieves all instances for a user on a specific day in their timezone.
 // It computes the start/end of the day in the user's timezone and converts to UTC for the SQL query.
-func GetInstancesByUserAndDay(db *sql.DB, userID string, date time.Time, loc *time.Location) ([]ReminderInstance, error) {
+func GetInstancesByUserAndDay(db  Querier , userID string, date time.Time, loc *time.Location) ([]ReminderInstance, error) {
 	year, month, day := date.In(loc).Date()
 	startOfDay := time.Date(year, month, day, 0, 0, 0, 0, loc)
 	endOfDay := startOfDay.Add(24 * time.Hour)
@@ -153,7 +134,7 @@ func GetInstancesByUserAndDay(db *sql.DB, userID string, date time.Time, loc *ti
 }
 
 // SetInstanceScheduledAt updates the scheduled_at and updated_at fields of a reminder instance.
-func SetInstanceScheduledAt(db *sql.DB, id string, t time.Time) error {
+func SetInstanceScheduledAt(db  Querier , id string, t time.Time) error {
 	const query = `UPDATE reminder_instances SET scheduled_at = ?, updated_at = ? WHERE id = ?`
 	now := time.Now().Unix()
 	res, err := db.Exec(query, t.Unix(), now, id)
@@ -164,7 +145,7 @@ func SetInstanceScheduledAt(db *sql.DB, id string, t time.Time) error {
 }
 
 // GetLastByReminder retrieves the last instance for a given reminder and time_index (for rescheduler).
-func GetLastByReminder(db *sql.DB, reminderID string, timeIndex int) (ReminderInstance, error) {
+func GetLastByReminder(db  Querier , reminderID string, timeIndex int) (ReminderInstance, error) {
 	const query = `SELECT id, reminder_id, time_index, scheduled_at, done_at, status, message_ids, created_at, updated_at
 		FROM reminder_instances
 		WHERE reminder_id = ? AND time_index = ?
@@ -180,7 +161,7 @@ func GetLastByReminder(db *sql.DB, reminderID string, timeIndex int) (ReminderIn
 // If status is "missed", the update is conditional on the current status being "pending"
 // to prevent races with the done handler. If the instance is already in a non-pending
 // state, the update is silently skipped (no-op).
-func SetStatus(db *sql.DB, id string, status string) error {
+func SetStatus(db  Querier , id string, status string) error {
 	now := time.Now().Unix()
 
 	var query string
@@ -211,7 +192,7 @@ func SetStatus(db *sql.DB, id string, status string) error {
 }
 
 // GetReminderInstancesByReminder retrieves all instances for a given reminder.
-func GetReminderInstancesByReminder(db *sql.DB, reminderID string) ([]ReminderInstance, error) {
+func GetReminderInstancesByReminder(db  Querier , reminderID string) ([]ReminderInstance, error) {
 	const query = `SELECT id, reminder_id, time_index, scheduled_at, done_at, status, message_ids, created_at, updated_at
 		FROM reminder_instances WHERE reminder_id = ?`
 
@@ -225,7 +206,7 @@ func GetReminderInstancesByReminder(db *sql.DB, reminderID string) ([]ReminderIn
 }
 
 // DeleteReminderInstances deletes all instances for a given reminder.
-func DeleteReminderInstances(db *sql.DB, reminderID string) error {
+func DeleteReminderInstances(db  Querier , reminderID string) error {
 	const query = `DELETE FROM reminder_instances WHERE reminder_id = ?`
 	_, err := db.Exec(query, reminderID)
 	if err != nil {
@@ -236,7 +217,7 @@ func DeleteReminderInstances(db *sql.DB, reminderID string) error {
 
 // SetStatusWithDoneAt updates the status and done_at of a reminder instance.
 // Intended for "done" status with a specific doneAt time.
-func SetStatusWithDoneAt(db *sql.DB, id string, status string, doneAt time.Time) error {
+func SetStatusWithDoneAt(db  Querier , id string, status string, doneAt time.Time) error {
 	const query = `UPDATE reminder_instances SET status = ?, done_at = ?, updated_at = ? WHERE id = ?`
 	now := time.Now().Unix()
 	res, err := db.Exec(query, status, doneAt.Unix(), now, id)
@@ -293,7 +274,7 @@ func MarkMissedAndDeleteOnce(db *sql.DB, instanceID, reminderID string) error {
 }
 
 // AddMessageID appends a MessageIDEntry to the instance's message_ids JSON array atomically via json_set.
-func AddMessageID(db *sql.DB, id string, messageID int, sentAt time.Time) error {
+func AddMessageID(db Querier, id string, messageID int, sentAt time.Time) error {
 	entry := MessageIDEntry{MessageID: messageID, SentAt: sentAt.Unix()}
 	entryJSON, err := json.Marshal(entry)
 	if err != nil {
@@ -306,6 +287,39 @@ func AddMessageID(db *sql.DB, id string, messageID int, sentAt time.Time) error 
 		return fmt.Errorf("add message_id: %w", err)
 	}
 	return checkRowsAffected(res, "reminder_instance", id)
+}
+
+// AddMessageIDAndSetMissed atomically adds a message ID and marks the instance as missed.
+// This prevents races between the scheduler and the done handler.
+func AddMessageIDAndSetMissed(db *sql.DB, instanceID string, messageID int, sentAt time.Time) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	entry := MessageIDEntry{MessageID: messageID, SentAt: sentAt.Unix()}
+	entryJSON, err := json.Marshal(entry)
+	if err != nil {
+		return fmt.Errorf("marshal message_id entry: %w", err)
+	}
+
+	now := time.Now().Unix()
+	// Add message ID and set missed atomically, only if still pending.
+	res, err := tx.Exec(`UPDATE reminder_instances SET message_ids = json_set(message_ids, '$[#]', json(?)), status = 'missed', updated_at = ? WHERE id = ? AND status = 'pending'`, string(entryJSON), now, instanceID)
+	if err != nil {
+		return fmt.Errorf("add message and set missed: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		// Already handled by done handler — skip.
+		return nil
+	}
+
+	return tx.Commit()
 }
 
 // scanReminderInstance scans a single ReminderInstance from a row scanner.

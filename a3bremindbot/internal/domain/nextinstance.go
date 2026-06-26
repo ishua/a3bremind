@@ -1,9 +1,8 @@
 package domain
 
 import (
-	"database/sql"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/a3bremind/a3bremindbot/internal/store"
@@ -13,7 +12,7 @@ import (
 // It returns a warning if the rescheduled time exceeds midnight.
 // It does nothing if the current instance is at the last time_index.
 // It should only be called for instances with status "done" or "skipped", not "missed".
-func NextInstance(db *sql.DB, inst store.ReminderInstance, now time.Time) (warning string, err error) {
+func NextInstance(db store.Querier, inst store.ReminderInstance, now time.Time) (warning string, err error) {
 	reminder, err := store.GetByID(db, inst.ReminderID)
 	if err != nil {
 		return "", fmt.Errorf("get reminder for next instance: %w", err)
@@ -77,8 +76,7 @@ func NextInstance(db *sql.DB, inst store.ReminderInstance, now time.Time) (warni
 		}
 	}
 
-	log.Printf("next instance created: reminder=%s time_index=%d->%d scheduled_at=%s",
-		inst.ReminderID, inst.TimeIndex, nextIndex, created.ScheduledAt.Format(time.RFC3339))
+	slog.Info("next instance created", "reminder", inst.ReminderID, "time_index", fmt.Sprintf("%d->%d", inst.TimeIndex, nextIndex), "scheduled_at", created.ScheduledAt.Format(time.RFC3339))
 
 	return warning, nil
 }

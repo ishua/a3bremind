@@ -53,15 +53,34 @@ func (h *Handler) handleDone(update tgbotapi.Update) {
 		return
 	}
 
-	// SetStatus("done") автоматически проставляет done_at = time.Now()
-	if err := store.SetStatus(h.db, instance.ID, "done"); err != nil {
+	// SetStatus("done") + GetInstanceByID + NextInstance в одной транзакции
+	tx, err := h.db.Begin()
+	if err != nil {
+		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
+		return
+	}
+	defer tx.Rollback()
+
+	if err := store.SetStatus(tx, instance.ID, "done"); err != nil {
 		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
 		return
 	}
 
 	// Перечитываем instance чтобы получить done_at
-	updated, err := store.GetInstanceByID(h.db, instance.ID)
+	updated, err := store.GetInstanceByID(tx, instance.ID)
 	if err != nil {
+		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
+		return
+	}
+
+	// NextInstance: создаём следующий в цепочке, если есть
+	warning, err := domain.NextInstance(tx, updated, time.Now())
+	if err != nil {
+		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
 		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
 		return
 	}
@@ -70,13 +89,6 @@ func (h *Handler) handleDone(update tgbotapi.Update) {
 	doneTime := "??:??"
 	if updated.DoneAt != nil {
 		doneTime = updated.DoneAt.Format("15:04")
-	}
-
-	// NextInstance: создаём следующий в цепочке, если есть
-	warning, err := domain.NextInstance(h.db, updated, time.Now())
-	if err != nil {
-		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
-		return
 	}
 
 	// Ответ: записано

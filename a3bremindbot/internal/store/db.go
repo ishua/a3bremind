@@ -70,5 +70,16 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	// Create indexes for performance.
+	indexStatements := []string{
+		`CREATE INDEX IF NOT EXISTS idx_instances_reminder_id ON reminder_instances(reminder_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_instances_scheduled_at_status ON reminder_instances(scheduled_at, status)`,
+	}
+	for _, stmt := range indexStatements {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("exec %q: %w", stmt[:40], err)
+		}
+	}
+
 	return nil
 }

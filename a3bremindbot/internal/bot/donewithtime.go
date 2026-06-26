@@ -32,11 +32,11 @@ func (h *Handler) handleDoneWithTime(update tgbotapi.Update) {
 	// Парсим HH:MM из текста
 	text := strings.TrimSpace(update.Message.Text)
 	parts := strings.Fields(text)
-	if len(parts) < 2 {
-		return // не должно случиться из-за isDoneWithTime
+	if len(parts) != 2 {
+		return // невалидный формат
 	}
 
-	timeStr := parts[len(parts)-1] // последнее слово
+	timeStr := parts[1]
 	parsed, err := time.ParseInLocation("15:04", timeStr, loc)
 	if err != nil {
 		return // игнорируем — невалидное время
@@ -83,7 +83,11 @@ func (h *Handler) handleConfirmDoneTime(update tgbotapi.Update) {
 		return
 	}
 
-	entry := val.(pendingConfirmEntry)
+	entry, ok := val.(pendingConfirmEntry)
+	if !ok {
+		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
+		return
+	}
 
 	// Загружаем пользователя
 	user, err := store.GetOrCreate(h.db, update.Message.Chat.ID)
@@ -112,22 +116,34 @@ func (h *Handler) handleConfirmDoneTime(update tgbotapi.Update) {
 		return
 	}
 
-	// Устанавливаем done с конкретным временем
-	if err := store.SetStatusWithDoneAt(h.db, entry.InstanceID, "done", entry.DoneAt); err != nil {
+	// SetStatusWithDoneAt + GetInstanceByID + NextInstance в одной транзакции
+	tx, err := h.db.Begin()
+	if err != nil {
+		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
+		return
+	}
+	defer tx.Rollback()
+
+	if err := store.SetStatusWithDoneAt(tx, entry.InstanceID, "done", entry.DoneAt); err != nil {
 		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
 		return
 	}
 
 	// Перечитываем Instance для NextInstance (DoneAt должен быть проставлен)
-	updated, err := store.GetInstanceByID(h.db, entry.InstanceID)
+	updated, err := store.GetInstanceByID(tx, entry.InstanceID)
 	if err != nil {
 		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
 		return
 	}
 
 	// NextInstance
-	warning, err := domain.NextInstance(h.db, updated, time.Now())
+	warning, err := domain.NextInstance(tx, updated, time.Now())
 	if err != nil {
+		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
 		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
 		return
 	}

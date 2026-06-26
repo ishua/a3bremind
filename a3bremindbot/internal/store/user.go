@@ -20,7 +20,7 @@ type User struct {
 
 // GetOrCreate upserts a user by telegram_id.
 // If the user exists, it returns the existing user without error.
-func GetOrCreate(db *sql.DB, telegramID int64) (User, error) {
+func GetOrCreate(db  Querier , telegramID int64) (User, error) {
 	const insert = `INSERT OR IGNORE INTO users (id, telegram_id, timezone, paused, last_reset_at, created_at)
 		VALUES (?, ?, '', 0, NULL, ?)`
 
@@ -35,7 +35,7 @@ func GetOrCreate(db *sql.DB, telegramID int64) (User, error) {
 }
 
 // GetByTelegramID retrieves a user by telegram_id.
-func GetByTelegramID(db *sql.DB, telegramID int64) (User, error) {
+func GetByTelegramID(db  Querier , telegramID int64) (User, error) {
 	const query = `SELECT id, telegram_id, timezone, paused, last_reset_at, created_at FROM users WHERE telegram_id = ?`
 
 	row := db.QueryRow(query, telegramID)
@@ -43,7 +43,7 @@ func GetByTelegramID(db *sql.DB, telegramID int64) (User, error) {
 }
 
 // GetUserByID retrieves a user by their internal ID.
-func GetUserByID(db *sql.DB, userID string) (User, error) {
+func GetUserByID(db  Querier , userID string) (User, error) {
 	const query = `SELECT id, telegram_id, timezone, paused, last_reset_at, created_at FROM users WHERE id = ?`
 
 	row := db.QueryRow(query, userID)
@@ -51,7 +51,7 @@ func GetUserByID(db *sql.DB, userID string) (User, error) {
 }
 
 // GetAllUsers retrieves all users from the database.
-func GetAllUsers(db *sql.DB) ([]User, error) {
+func GetAllUsers(db  Querier ) ([]User, error) {
 	const query = `SELECT id, telegram_id, timezone, paused, last_reset_at, created_at FROM users`
 
 	rows, err := db.Query(query)
@@ -80,7 +80,7 @@ func GetAllUsers(db *sql.DB) ([]User, error) {
 }
 
 // SetTimezone updates the timezone for a user.
-func SetTimezone(db *sql.DB, userID string, tz string) error {
+func SetTimezone(db  Querier , userID string, tz string) error {
 	const query = `UPDATE users SET timezone = ? WHERE id = ?`
 	res, err := db.Exec(query, tz, userID)
 	if err != nil {
@@ -90,7 +90,7 @@ func SetTimezone(db *sql.DB, userID string, tz string) error {
 }
 
 // SetPaused updates the paused flag for a user.
-func SetPaused(db *sql.DB, userID string, paused bool) error {
+func SetPaused(db  Querier , userID string, paused bool) error {
 	const query = `UPDATE users SET paused = ? WHERE id = ?`
 	pausedInt := 0
 	if paused {
@@ -104,7 +104,7 @@ func SetPaused(db *sql.DB, userID string, paused bool) error {
 }
 
 // SetLastResetAt updates the last_reset_at timestamp for a user.
-func SetLastResetAt(db *sql.DB, userID string, t time.Time) error {
+func SetLastResetAt(db  Querier , userID string, t time.Time) error {
 	const query = `UPDATE users SET last_reset_at = ? WHERE id = ?`
 	res, err := db.Exec(query, t.Unix(), userID)
 	if err != nil {

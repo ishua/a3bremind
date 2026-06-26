@@ -2,6 +2,7 @@ package bot
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -189,6 +190,9 @@ func parseAddCommand(text string) (label, repeat string, times []string, minGap 
 		if gapErr != nil {
 			return "", "", nil, nil, gapErr
 		}
+		if gapVal <= 0 {
+			return "", "", nil, nil, fmt.Errorf("Gap должен быть положительным (например, gap:1h или gap:30m)")
+		}
 		minGap = &gapVal
 		tokens = tokens[1:] // убираем gap-токен
 	}
@@ -216,12 +220,9 @@ func parseGap(s string) (int, error) {
 	unit := s[len(s)-1]
 	numStr := s[:len(s)-1]
 
-	var num int
-	for _, c := range numStr {
-		if c < '0' || c > '9' {
-			return 0, fmt.Errorf("Неверный формат gap. Используй gap:3h или gap:30m")
-		}
-		num = num*10 + int(c-'0')
+	num, err := strconv.Atoi(numStr)
+	if err != nil {
+		return 0, fmt.Errorf("Неверный формат gap. Используй gap:3h или gap:30m")
 	}
 
 	switch unit {
