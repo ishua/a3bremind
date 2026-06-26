@@ -52,6 +52,7 @@ func NextInstance(db store.Querier, inst store.ReminderInstance, now time.Time) 
 
 	newInst := store.ReminderInstance{
 		ReminderID:  inst.ReminderID,
+		ForDate:     inst.ForDate,
 		TimeIndex:   nextIndex,
 		ScheduledAt: instanceTime,
 		Status:      "pending",

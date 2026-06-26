@@ -123,9 +123,15 @@ func (h *Handler) handleAdd(update tgbotapi.Update) {
 		loc,
 	)
 
+	forDate := time.Date(
+		now.Year(), now.Month(), now.Day(),
+		0, 0, 0, 0, loc,
+	)
+
 	// Создаём первый Instance
 	instance := store.ReminderInstance{
 		ReminderID:  created.ID,
+		ForDate:     forDate,
 		TimeIndex:   0,
 		ScheduledAt: scheduledAt,
 		Status:      "pending",

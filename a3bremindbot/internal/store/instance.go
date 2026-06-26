@@ -19,6 +19,7 @@ type MessageIDEntry struct {
 type ReminderInstance struct {
 	ID          string
 	ReminderID  string
+	ForDate     time.Time
 	TimeIndex   int
 	ScheduledAt time.Time
 	DoneAt      *time.Time
@@ -48,10 +49,10 @@ func CreateInstance(db Querier, i ReminderInstance) (ReminderInstance, error) {
 		return ReminderInstance{}, fmt.Errorf("marshal message_ids: %w", err)
 	}
 
-	const query = `INSERT INTO reminder_instances (id, reminder_id, time_index, scheduled_at, done_at, status, message_ids, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	const query = `INSERT INTO reminder_instances (id, reminder_id, for_date, time_index, scheduled_at, done_at, status, message_ids, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
-	_, err = db.Exec(query, i.ID, i.ReminderID, i.TimeIndex, i.ScheduledAt.Unix(), nullInt64FromTimePtr(i.DoneAt), i.Status, string(messageIDsJSON), now, now)
+	_, err = db.Exec(query, i.ID, i.ReminderID, i.ForDate.Unix(), i.TimeIndex, i.ScheduledAt.Unix(), nullInt64FromTimePtr(i.DoneAt), i.Status, string(messageIDsJSON), now, now)
 	if err != nil {
 		return ReminderInstance{}, fmt.Errorf("create instance: %w", err)
 	}
@@ -61,7 +62,7 @@ func CreateInstance(db Querier, i ReminderInstance) (ReminderInstance, error) {
 
 // GetInstanceByID retrieves a reminder instance by ID.
 func GetInstanceByID(db  Querier , id string) (ReminderInstance, error) {
-	const query = `SELECT id, reminder_id, time_index, scheduled_at, done_at, status, message_ids, created_at, updated_at
+	const query = `SELECT id, reminder_id, for_date, time_index, scheduled_at, done_at, status, message_ids, created_at, updated_at
 		FROM reminder_instances WHERE id = ?`
 
 	row := db.QueryRow(query, id)
@@ -70,7 +71,7 @@ func GetInstanceByID(db  Querier , id string) (ReminderInstance, error) {
 
 // GetPending retrieves all pending instances whose scheduled_at <= now.
 func GetPending(db  Querier , now time.Time) ([]ReminderInstance, error) {
-	const query = `SELECT id, reminder_id, time_index, scheduled_at, done_at, status, message_ids, created_at, updated_at
+	const query = `SELECT id, reminder_id, for_date, time_index, scheduled_at, done_at, status, message_ids, created_at, updated_at
 		FROM reminder_instances WHERE scheduled_at <= ? AND status = 'pending'`
 
 	rows, err := db.Query(query, now.Unix())
@@ -84,7 +85,7 @@ func GetPending(db  Querier , now time.Time) ([]ReminderInstance, error) {
 
 // GetActiveByUser retrieves all pending instances for a user (for done without reply fallback).
 func GetActiveByUser(db  Querier , userID string) ([]ReminderInstance, error) {
-	const query = `SELECT ri.id, ri.reminder_id, ri.time_index, ri.scheduled_at, ri.done_at, ri.status, ri.message_ids, ri.created_at, ri.updated_at
+	const query = `SELECT ri.id, ri.reminder_id, ri.for_date, ri.time_index, ri.scheduled_at, ri.done_at, ri.status, ri.message_ids, ri.created_at, ri.updated_at
 		FROM reminder_instances ri
 		JOIN reminders r ON r.id = ri.reminder_id
 		WHERE r.user_id = ? AND ri.status = 'pending'
@@ -102,7 +103,7 @@ func GetActiveByUser(db  Querier , userID string) ([]ReminderInstance, error) {
 // GetInstanceByMessageID retrieves a reminder instance by a message_id (for reply binding).
 // Uses json_each to avoid a full table scan.
 func GetInstanceByMessageID(db  Querier , messageID int) (ReminderInstance, error) {
-	const query = `SELECT ri.id, ri.reminder_id, ri.time_index, ri.scheduled_at, ri.done_at, ri.status, ri.message_ids, ri.created_at, ri.updated_at
+	const query = `SELECT ri.id, ri.reminder_id, ri.for_date, ri.time_index, ri.scheduled_at, ri.done_at, ri.status, ri.message_ids, ri.created_at, ri.updated_at
 		FROM reminder_instances ri, json_each(ri.message_ids)
 		WHERE json_extract(json_each.value, '$.message_id') = ?
 		LIMIT 1`
@@ -112,16 +113,16 @@ func GetInstanceByMessageID(db  Querier , messageID int) (ReminderInstance, erro
 }
 
 // GetInstancesByUserAndDay retrieves all instances for a user on a specific day in their timezone.
-// It computes the start/end of the day in the user's timezone and converts to UTC for the SQL query.
+// Filters by for_date — the day the instance belongs to, regardless of scheduled_at shifts.
 func GetInstancesByUserAndDay(db  Querier , userID string, date time.Time, loc *time.Location) ([]ReminderInstance, error) {
 	year, month, day := date.In(loc).Date()
 	startOfDay := time.Date(year, month, day, 0, 0, 0, 0, loc)
 	endOfDay := startOfDay.Add(24 * time.Hour)
 
-	const query = `SELECT ri.id, ri.reminder_id, ri.time_index, ri.scheduled_at, ri.done_at, ri.status, ri.message_ids, ri.created_at, ri.updated_at
+	const query = `SELECT ri.id, ri.reminder_id, ri.for_date, ri.time_index, ri.scheduled_at, ri.done_at, ri.status, ri.message_ids, ri.created_at, ri.updated_at
 		FROM reminder_instances ri
 		JOIN reminders r ON r.id = ri.reminder_id
-		WHERE r.user_id = ? AND ri.scheduled_at >= ? AND ri.scheduled_at < ?
+		WHERE r.user_id = ? AND ri.for_date >= ? AND ri.for_date < ?
 		ORDER BY ri.scheduled_at ASC`
 
 	rows, err := db.Query(query, userID, startOfDay.Unix(), endOfDay.Unix())
@@ -146,7 +147,7 @@ func SetInstanceScheduledAt(db  Querier , id string, t time.Time) error {
 
 // GetLastByReminder retrieves the last instance for a given reminder and time_index (for rescheduler).
 func GetLastByReminder(db  Querier , reminderID string, timeIndex int) (ReminderInstance, error) {
-	const query = `SELECT id, reminder_id, time_index, scheduled_at, done_at, status, message_ids, created_at, updated_at
+	const query = `SELECT id, reminder_id, for_date, time_index, scheduled_at, done_at, status, message_ids, created_at, updated_at
 		FROM reminder_instances
 		WHERE reminder_id = ? AND time_index = ?
 		ORDER BY scheduled_at DESC
@@ -193,7 +194,7 @@ func SetStatus(db  Querier , id string, status string) error {
 
 // GetReminderInstancesByReminder retrieves all instances for a given reminder.
 func GetReminderInstancesByReminder(db  Querier , reminderID string) ([]ReminderInstance, error) {
-	const query = `SELECT id, reminder_id, time_index, scheduled_at, done_at, status, message_ids, created_at, updated_at
+	const query = `SELECT id, reminder_id, for_date, time_index, scheduled_at, done_at, status, message_ids, created_at, updated_at
 		FROM reminder_instances WHERE reminder_id = ?`
 
 	rows, err := db.Query(query, reminderID)
@@ -378,16 +379,17 @@ func AddMessageIDAndSetMissed(db *sql.DB, instanceID string, messageID int, sent
 func scanReminderInstance(row scannable) (ReminderInstance, error) {
 	var i ReminderInstance
 	var doneAt sql.NullInt64
-	var scheduledAt, createdAt, updatedAt int64
+	var forDate, scheduledAt, createdAt, updatedAt int64
 	var messageIDsJSON string
 
-	if err := row.Scan(&i.ID, &i.ReminderID, &i.TimeIndex, &scheduledAt, &doneAt, &i.Status, &messageIDsJSON, &createdAt, &updatedAt); err != nil {
+	if err := row.Scan(&i.ID, &i.ReminderID, &forDate, &i.TimeIndex, &scheduledAt, &doneAt, &i.Status, &messageIDsJSON, &createdAt, &updatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return ReminderInstance{}, fmt.Errorf("reminder_instance not found")
 		}
 		return ReminderInstance{}, fmt.Errorf("scan reminder_instance: %w", err)
 	}
 
+	i.ForDate = time.Unix(forDate, 0)
 	i.ScheduledAt = time.Unix(scheduledAt, 0)
 	i.CreatedAt = time.Unix(createdAt, 0)
 	i.UpdatedAt = time.Unix(updatedAt, 0)

@@ -54,6 +54,7 @@ func DailyReset(db *sql.DB, userID string, now time.Time) error {
 
 		inst := store.ReminderInstance{
 			ReminderID:  r.ID,
+			ForDate:     todayStart,
 			TimeIndex:   0,
 			ScheduledAt: instanceTime,
 			Status:      "pending",

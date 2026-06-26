@@ -98,6 +98,7 @@ func TestProcessPending_FirstNotification(t *testing.T) {
 
 	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     now,
 		TimeIndex:   0,
 		ScheduledAt: past,
 		Status:      "pending",
@@ -135,6 +136,7 @@ func TestProcessPending_Repeat(t *testing.T) {
 
 	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     now,
 		TimeIndex:   0,
 		ScheduledAt: past,
 		Status:      "pending",
@@ -174,6 +176,7 @@ func TestProcessPending_RepeatTooEarly(t *testing.T) {
 
 	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     now,
 		TimeIndex:   0,
 		ScheduledAt: past,
 		Status:      "pending",
@@ -207,6 +210,7 @@ func TestProcessPending_Missed(t *testing.T) {
 
 	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     now,
 		TimeIndex:   0,
 		ScheduledAt: past,
 		Status:      "pending",
@@ -248,6 +252,7 @@ func TestProcessPending_OnceMissedDeleted(t *testing.T) {
 
 	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     now,
 		TimeIndex:   0,
 		ScheduledAt: past,
 		Status:      "pending",
@@ -412,6 +417,7 @@ func TestNextInstance_NextInChain(t *testing.T) {
 
 	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     now,
 		TimeIndex:   0,
 		ScheduledAt: past,
 		Status:      "done",
@@ -445,6 +451,7 @@ func TestNextInstance_LastIndex(t *testing.T) {
 	// Last index = 1 (len(Times)-1 = 1).
 	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     now,
 		TimeIndex:   1,
 		ScheduledAt: past,
 		Status:      "done",
@@ -572,6 +579,7 @@ func TestNextInstance_WithReschedule(t *testing.T) {
 	// Create a done instance at time_index=0
 	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     now,
 		TimeIndex:   0,
 		ScheduledAt: past,
 		Status:      "done",
@@ -615,6 +623,7 @@ func TestNextInstance_RescheduleWarning(t *testing.T) {
 
 	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     now,
 		TimeIndex:   0,
 		ScheduledAt: now.Add(-1 * time.Hour),
 		Status:      "done",
@@ -626,6 +635,50 @@ func TestNextInstance_RescheduleWarning(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, warning)
 	assert.Contains(t, warning, "полночь")
+}
+
+func TestNextInstance_ForDateUnchanged(t *testing.T) {
+	resetGlobals()
+	db, _, _ := setup(t)
+
+	u := createTestUser(t, db, 502, "UTC")
+	r, err := store.Create(db, store.Reminder{
+		UserID: u.ID,
+		Label:  "ForDate test",
+		Times:  []string{"09:00", "17:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	now := time.Now().Truncate(time.Second)
+	past := now.Add(-1 * time.Hour)
+
+	originalForDate := time.Date(
+		now.Year(), now.Month(), now.Day(),
+		0, 0, 0, 0, time.UTC,
+	)
+
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		ForDate:     originalForDate,
+		TimeIndex:   0,
+		ScheduledAt: past,
+		Status:      "done",
+		DoneAt:      &now,
+	})
+	require.NoError(t, err)
+
+	// NextInstance creates a new instance with TimeIndex=1.
+	_, err = NextInstance(db, inst, now)
+	require.NoError(t, err)
+
+	// The new instance should inherit the same ForDate.
+	active, err := store.GetActiveByUser(db, u.ID)
+	require.NoError(t, err)
+	require.Len(t, active, 1)
+	assert.Equal(t, 1, active[0].TimeIndex)
+	assert.Equal(t, originalForDate.Unix(), active[0].ForDate.Unix(),
+		"ForDate should be inherited from the source instance, not changed by NextInstance")
 }
 
 // ---------------------------------------------------------------------------
@@ -651,6 +704,7 @@ func TestProcessPending_RaceWithDone(t *testing.T) {
 
 	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     now,
 		TimeIndex:   0,
 		ScheduledAt: past,
 		Status:      "pending",
@@ -693,6 +747,7 @@ func TestProcessPending_RaceWithDoneOnceReminder(t *testing.T) {
 
 	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     now,
 		TimeIndex:   0,
 		ScheduledAt: past,
 		Status:      "pending",
@@ -732,6 +787,7 @@ func TestMarkMissedAndDeleteOnce_Transaction(t *testing.T) {
 
 	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     now,
 		TimeIndex:   0,
 		ScheduledAt: past,
 		Status:      "pending",
@@ -764,6 +820,7 @@ func TestMarkMissedAndDeleteOnce_AlreadyDone(t *testing.T) {
 
 	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     now,
 		TimeIndex:   0,
 		ScheduledAt: past,
 		Status:      "pending",
@@ -805,6 +862,7 @@ func TestIntegration_ProcessPending_NextInstance(t *testing.T) {
 
 	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     now,
 		TimeIndex:   0,
 		ScheduledAt: past,
 		Status:      "pending",

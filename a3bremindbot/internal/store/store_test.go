@@ -310,6 +310,7 @@ func TestCreateReminderInstance(t *testing.T) {
 	inst := ReminderInstance{
 		ReminderID:  r.ID,
 		TimeIndex:   0,
+		ForDate:     now,
 		ScheduledAt: now,
 		Status:      "pending",
 		MessageIDs:  []MessageIDEntry{},
@@ -335,6 +336,7 @@ func TestCreateInstance_MessageIDsInit(t *testing.T) {
 	inst := ReminderInstance{
 		ReminderID:  r.ID,
 		TimeIndex:   0,
+		ForDate:     time.Now(),
 		ScheduledAt: time.Now(),
 		// MessageIDs is nil — should be initialized to []MessageIDEntry{}.
 	}
@@ -357,7 +359,7 @@ func TestGetInstanceByID(t *testing.T) {
 	u, _ := GetOrCreate(db, 22)
 	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Get instance", Times: []string{"09:00"}, Repeat: "daily"})
 
-	inst, _ := CreateInstance(db, ReminderInstance{ReminderID: r.ID, TimeIndex: 0, ScheduledAt: time.Now()})
+	inst, _ := CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: time.Now(), TimeIndex: 0, ScheduledAt: time.Now()})
 
 	got, err := GetInstanceByID(db, inst.ID)
 	require.NoError(t, err)
@@ -382,11 +384,11 @@ func TestGetPending(t *testing.T) {
 	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Pending test", Times: []string{"09:00"}, Repeat: "daily"})
 
 	// Past — should be pending.
-	CreateInstance(db, ReminderInstance{ReminderID: r.ID, TimeIndex: 0, ScheduledAt: past, Status: "pending"})
+	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: past, TimeIndex: 0, ScheduledAt: past, Status: "pending"})
 	// Future — should NOT be pending yet.
-	CreateInstance(db, ReminderInstance{ReminderID: r.ID, TimeIndex: 1, ScheduledAt: future, Status: "pending"})
+	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: future, TimeIndex: 1, ScheduledAt: future, Status: "pending"})
 	// Past but done — should NOT be selected.
-	CreateInstance(db, ReminderInstance{ReminderID: r.ID, TimeIndex: 2, ScheduledAt: past, Status: "done"})
+	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: past, TimeIndex: 2, ScheduledAt: past, Status: "done"})
 
 	pending, err := GetPending(db, now)
 	require.NoError(t, err)
@@ -402,12 +404,12 @@ func TestGetActiveByUser(t *testing.T) {
 	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Active test", Times: []string{"09:00"}, Repeat: "daily"})
 	r2, _ := Create(db, Reminder{UserID: u2.ID, Label: "Other user", Times: []string{"09:00"}, Repeat: "daily"})
 
-	CreateInstance(db, ReminderInstance{ReminderID: r.ID, TimeIndex: 0, ScheduledAt: time.Now(), Status: "pending"})
-	CreateInstance(db, ReminderInstance{ReminderID: r.ID, TimeIndex: 1, ScheduledAt: time.Now(), Status: "pending"})
+	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: time.Now(), TimeIndex: 0, ScheduledAt: time.Now(), Status: "pending"})
+	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: time.Now(), TimeIndex: 1, ScheduledAt: time.Now(), Status: "pending"})
 	// This instance belongs to other user.
-	CreateInstance(db, ReminderInstance{ReminderID: r2.ID, TimeIndex: 0, ScheduledAt: time.Now(), Status: "pending"})
+	CreateInstance(db, ReminderInstance{ReminderID: r2.ID, ForDate: time.Now(), TimeIndex: 0, ScheduledAt: time.Now(), Status: "pending"})
 	// Done — should not appear.
-	CreateInstance(db, ReminderInstance{ReminderID: r.ID, TimeIndex: 2, ScheduledAt: time.Now(), Status: "done"})
+	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: time.Now(), TimeIndex: 2, ScheduledAt: time.Now(), Status: "done"})
 
 	active, err := GetActiveByUser(db, u.ID)
 	require.NoError(t, err)
@@ -422,6 +424,7 @@ func TestGetInstanceByMessageID(t *testing.T) {
 
 	inst, _ := CreateInstance(db, ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Now(),
 		TimeIndex:   0,
 		ScheduledAt: time.Now(),
 		Status:      "pending",
@@ -439,6 +442,7 @@ func TestGetInstanceByMessageID(t *testing.T) {
 	// Try with a second instance that also has a message ID.
 	inst2, _ := CreateInstance(db, ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Now(),
 		TimeIndex:   1,
 		ScheduledAt: time.Now(),
 		Status:      "pending",
@@ -467,11 +471,11 @@ func TestGetLastByReminder(t *testing.T) {
 	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Last test", Times: []string{"09:00", "17:00"}, Repeat: "daily"})
 
 	// TimeIndex 0 — create two instances at different times.
-	CreateInstance(db, ReminderInstance{ReminderID: r.ID, TimeIndex: 0, ScheduledAt: now.Add(-2 * time.Hour), Status: "done"})
-	latest, _ := CreateInstance(db, ReminderInstance{ReminderID: r.ID, TimeIndex: 0, ScheduledAt: now.Add(-1 * time.Hour), Status: "done"})
+	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: now, TimeIndex: 0, ScheduledAt: now.Add(-2 * time.Hour), Status: "done"})
+	latest, _ := CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: now, TimeIndex: 0, ScheduledAt: now.Add(-1 * time.Hour), Status: "done"})
 
 	// TimeIndex 1 — one instance.
-	CreateInstance(db, ReminderInstance{ReminderID: r.ID, TimeIndex: 1, ScheduledAt: now, Status: "pending"})
+	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: now, TimeIndex: 1, ScheduledAt: now, Status: "pending"})
 
 	got, err := GetLastByReminder(db, r.ID, 0)
 	require.NoError(t, err)
@@ -495,7 +499,7 @@ func TestSetStatus(t *testing.T) {
 
 	u, _ := GetOrCreate(db, 28)
 	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Status test", Times: []string{"09:00"}, Repeat: "daily"})
-	inst, _ := CreateInstance(db, ReminderInstance{ReminderID: r.ID, TimeIndex: 0, ScheduledAt: time.Now(), Status: "pending"})
+	inst, _ := CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: time.Now(), TimeIndex: 0, ScheduledAt: time.Now(), Status: "pending"})
 
 	// Read from DB to get the exact stored updated_at.
 	gotBefore, err := GetInstanceByID(db, inst.ID)
@@ -524,7 +528,7 @@ func TestAddMessageID(t *testing.T) {
 
 	u, _ := GetOrCreate(db, 30)
 	r, _ := Create(db, Reminder{UserID: u.ID, Label: "AddMsg test", Times: []string{"09:00"}, Repeat: "daily"})
-	inst, _ := CreateInstance(db, ReminderInstance{ReminderID: r.ID, TimeIndex: 0, ScheduledAt: time.Now(), Status: "pending"})
+	inst, _ := CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: time.Now(), TimeIndex: 0, ScheduledAt: time.Now(), Status: "pending"})
 
 	// Initial message_ids should be empty.
 	got, _ := GetInstanceByID(db, inst.ID)
@@ -559,7 +563,7 @@ func TestAddMessageID_Concurrent(t *testing.T) {
 
 	u, _ := GetOrCreate(db, 31)
 	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Concurrent test", Times: []string{"09:00"}, Repeat: "daily"})
-	inst, _ := CreateInstance(db, ReminderInstance{ReminderID: r.ID, TimeIndex: 0, ScheduledAt: time.Now(), Status: "pending"})
+	inst, _ := CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: time.Now(), TimeIndex: 0, ScheduledAt: time.Now(), Status: "pending"})
 
 	const numGoroutines = 20
 	var wg sync.WaitGroup
@@ -608,7 +612,7 @@ func TestAddMessageIDAndMarkMissedDeleteOnce_HappyPath(t *testing.T) {
 
 	u, _ := GetOrCreate(db, 110)
 	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Once atomic", Times: []string{"09:00"}, Repeat: "once"})
-	inst, _ := CreateInstance(db, ReminderInstance{ReminderID: r.ID, TimeIndex: 0, ScheduledAt: time.Now(), Status: "pending"})
+	inst, _ := CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: time.Now(), TimeIndex: 0, ScheduledAt: time.Now(), Status: "pending"})
 
 	now := time.Now()
 
@@ -630,7 +634,7 @@ func TestAddMessageIDAndMarkMissedDeleteOnce_AlreadyDone(t *testing.T) {
 
 	u, _ := GetOrCreate(db, 111)
 	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Once atomic already done", Times: []string{"09:00"}, Repeat: "once"})
-	inst, _ := CreateInstance(db, ReminderInstance{ReminderID: r.ID, TimeIndex: 0, ScheduledAt: time.Now(), Status: "pending"})
+	inst, _ := CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: time.Now(), TimeIndex: 0, ScheduledAt: time.Now(), Status: "pending"})
 
 	// Done handler runs first.
 	err := SetStatus(db, inst.ID, "done")
@@ -710,11 +714,11 @@ func TestTimeIndexBoundaries(t *testing.T) {
 	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Index test", Times: []string{"09:00"}, Repeat: "daily"})
 
 	// TimeIndex = 0 is valid.
-	_, err := CreateInstance(db, ReminderInstance{ReminderID: r.ID, TimeIndex: 0, ScheduledAt: time.Now()})
+	_, err := CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: time.Now(), TimeIndex: 0, ScheduledAt: time.Now()})
 	require.NoError(t, err)
 
 	// Large index (25 reminders per day with 30-min slots = 48 max, but test a large value).
-	_, err = CreateInstance(db, ReminderInstance{ReminderID: r.ID, TimeIndex: 100, ScheduledAt: time.Now()})
+	_, err = CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: time.Now(), TimeIndex: 100, ScheduledAt: time.Now()})
 	require.NoError(t, err)
 
 	// Both should be retrievable by GetActiveByUser.
@@ -767,7 +771,7 @@ func TestDeleteReminderCascadesNothing(t *testing.T) {
 
 	u, _ := GetOrCreate(db, 600)
 	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Cascade test", Times: []string{"09:00"}, Repeat: "daily"})
-	CreateInstance(db, ReminderInstance{ReminderID: r.ID, TimeIndex: 0, ScheduledAt: time.Now(), Status: "pending"})
+	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: time.Now(), TimeIndex: 0, ScheduledAt: time.Now(), Status: "pending"})
 
 	err := Delete(db, r.ID)
 	require.NoError(t, err)
@@ -794,12 +798,14 @@ func TestGetInstancesByUserAndDay(t *testing.T) {
 
 	inst1, _ := CreateInstance(db, ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Date(2026, 6, 25, 0, 0, 0, 0, moscow),
 		TimeIndex:   0,
 		ScheduledAt: time.Date(2026, 6, 25, 9, 0, 0, 0, moscow),
 		Status:      "pending",
 	})
 	inst2, _ := CreateInstance(db, ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Date(2026, 6, 25, 0, 0, 0, 0, moscow),
 		TimeIndex:   1,
 		ScheduledAt: time.Date(2026, 6, 25, 12, 0, 0, 0, moscow),
 		Status:      "done",
@@ -807,6 +813,7 @@ func TestGetInstancesByUserAndDay(t *testing.T) {
 	// Instance for a different day
 	CreateInstance(db, ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Date(2026, 6, 26, 0, 0, 0, 0, moscow),
 		TimeIndex:   0,
 		ScheduledAt: time.Date(2026, 6, 26, 9, 0, 0, 0, moscow),
 		Status:      "pending",
@@ -848,6 +855,7 @@ func TestGetInstancesByUserAndDay_TimezoneBoundary(t *testing.T) {
 	// Instance at 2026-06-24 22:00 UTC = 2026-06-25 01:00 MSK — should be June 25 in Moscow
 	instJune25, _ := CreateInstance(db, ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Date(2026, 6, 25, 0, 0, 0, 0, moscow),
 		TimeIndex:   0,
 		ScheduledAt: time.Date(2026, 6, 24, 22, 0, 0, 0, utc),
 		Status:      "pending",
@@ -855,6 +863,7 @@ func TestGetInstancesByUserAndDay_TimezoneBoundary(t *testing.T) {
 	// Instance at 2026-06-24 20:00 UTC = 2026-06-24 23:00 MSK — should be June 24 in Moscow
 	CreateInstance(db, ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Date(2026, 6, 24, 0, 0, 0, 0, moscow),
 		TimeIndex:   0,
 		ScheduledAt: time.Date(2026, 6, 24, 20, 0, 0, 0, utc),
 		Status:      "pending",
@@ -865,6 +874,41 @@ func TestGetInstancesByUserAndDay_TimezoneBoundary(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, instances, 1)
 	assert.Equal(t, instJune25.ID, instances[0].ID)
+}
+
+func TestGetInstancesByUserAndDay_ForDateDifferentFromScheduledAt(t *testing.T) {
+	// An instance with ScheduledAt on the next day (01:00) but ForDate = today
+	// should still appear in today's GetInstancesByUserAndDay query.
+	db := newTestDB(t)
+
+	u, _ := GetOrCreate(db, 903)
+	_ = SetTimezone(db, u.ID, "Europe/Moscow")
+	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Valhalla test", Times: []string{"09:00"}, Repeat: "daily"})
+
+	moscow, _ := time.LoadLocation("Europe/Moscow")
+	forDate := time.Date(2026, 6, 25, 0, 0, 0, 0, moscow)
+
+	// ScheduledAt = 2026-06-26 01:00 MSK (next day), ForDate = 2026-06-25 (today)
+	inst, _ := CreateInstance(db, ReminderInstance{
+		ReminderID:  r.ID,
+		ForDate:     forDate,
+		TimeIndex:   0,
+		ScheduledAt: time.Date(2026, 6, 26, 1, 0, 0, 0, moscow),
+		Status:      "pending",
+	})
+
+	date := time.Date(2026, 6, 25, 0, 0, 0, 0, moscow)
+	instances, err := GetInstancesByUserAndDay(db, u.ID, date, moscow)
+	require.NoError(t, err)
+	require.Len(t, instances, 1, "instance with ScheduledAt on next day should appear in today's query")
+	assert.Equal(t, inst.ID, instances[0].ID)
+	assert.Equal(t, "pending", instances[0].Status)
+
+	// Should NOT appear in tomorrow's query.
+	tomorrow := time.Date(2026, 6, 26, 0, 0, 0, 0, moscow)
+	instances2, err := GetInstancesByUserAndDay(db, u.ID, tomorrow, moscow)
+	require.NoError(t, err)
+	assert.Empty(t, instances2, "instance with ForDate=today should NOT appear in tomorrow's query")
 }
 
 // ---------------------------------------------------------------------------
@@ -879,6 +923,7 @@ func TestSetInstanceScheduledAt(t *testing.T) {
 
 	inst, _ := CreateInstance(db, ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC),
 		TimeIndex:   0,
 		ScheduledAt: time.Date(2026, 6, 25, 9, 0, 0, 0, time.UTC),
 		Status:      "pending",
@@ -903,6 +948,32 @@ func TestSetInstanceScheduledAt_NotFound(t *testing.T) {
 	assert.ErrorContains(t, err, "not found")
 }
 
+func TestSetInstanceScheduledAt_ForDateUnchanged(t *testing.T) {
+	db := newTestDB(t)
+
+	u, _ := GetOrCreate(db, 911)
+	r, _ := Create(db, Reminder{UserID: u.ID, Label: "ForDate test", Times: []string{"09:00"}, Repeat: "daily"})
+
+	forDate := time.Date(2026, 6, 25, 10, 0, 0, 0, time.UTC)
+	inst, _ := CreateInstance(db, ReminderInstance{
+		ReminderID:  r.ID,
+		ForDate:     forDate,
+		TimeIndex:   0,
+		ScheduledAt: time.Date(2026, 6, 25, 9, 0, 0, 0, time.UTC),
+		Status:      "pending",
+	})
+
+	// Set ScheduledAt to the next day (simulates snooze past midnight).
+	newTime := time.Date(2026, 6, 26, 1, 0, 0, 0, time.UTC)
+	err := SetInstanceScheduledAt(db, inst.ID, newTime)
+	require.NoError(t, err)
+
+	got, err := GetInstanceByID(db, inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, newTime.Unix(), got.ScheduledAt.Unix(), "ScheduledAt should be updated")
+	assert.Equal(t, forDate.Unix(), got.ForDate.Unix(), "ForDate should NOT be changed by SetInstanceScheduledAt")
+}
+
 // ---------------------------------------------------------------------------
 // GetReminderInstancesByReminder tests
 // ---------------------------------------------------------------------------
@@ -915,12 +986,14 @@ func TestGetReminderInstancesByReminder(t *testing.T) {
 
 	inst1, _ := CreateInstance(db, ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC),
 		TimeIndex:   0,
 		ScheduledAt: time.Date(2026, 6, 25, 9, 0, 0, 0, time.UTC),
 		Status:      "done",
 	})
 	inst2, _ := CreateInstance(db, ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC),
 		TimeIndex:   1,
 		ScheduledAt: time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC),
 		Status:      "pending",
@@ -953,12 +1026,14 @@ func TestDeleteReminderInstances(t *testing.T) {
 
 	CreateInstance(db, ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Now(),
 		TimeIndex:   0,
 		ScheduledAt: time.Now(),
 		Status:      "pending",
 	})
 	CreateInstance(db, ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Now(),
 		TimeIndex:   1,
 		ScheduledAt: time.Now(),
 		Status:      "pending",
@@ -992,6 +1067,7 @@ func TestSetStatusWithDoneAt(t *testing.T) {
 
 	inst, _ := CreateInstance(db, ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC),
 		TimeIndex:   0,
 		ScheduledAt: time.Date(2026, 6, 25, 9, 0, 0, 0, time.UTC),
 		Status:      "pending",

@@ -151,6 +151,7 @@ func TestHandleDone_RescheduleWarning(t *testing.T) {
 
 	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Now(),
 		TimeIndex:   0,
 		ScheduledAt: time.Now().Add(-1 * time.Hour),
 		Status:      "pending",
@@ -210,6 +211,7 @@ func TestHandleDone_RescheduleNotification(t *testing.T) {
 	doneAt := time.Now().Add(-30 * time.Minute).Truncate(time.Second)
 	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     doneAt,
 		TimeIndex:   0,
 		ScheduledAt: doneAt.Add(-1 * time.Hour),
 		Status:      "pending",
@@ -266,6 +268,7 @@ func TestHandleDone_NoRescheduleNotification(t *testing.T) {
 
 	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Now(),
 		TimeIndex:   0,
 		ScheduledAt: time.Now().Add(-1 * time.Hour),
 		Status:      "pending",
@@ -469,6 +472,7 @@ func TestHandleDone_Reply(t *testing.T) {
 
 	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Now(),
 		TimeIndex:   0,
 		ScheduledAt: time.Now().Add(-1 * time.Hour),
 		Status:      "pending",
@@ -522,6 +526,7 @@ func TestHandleDone_NextInstanceCreated(t *testing.T) {
 
 	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Now(),
 		TimeIndex:   0,
 		ScheduledAt: time.Now().Add(-1 * time.Hour),
 		Status:      "pending",
@@ -569,6 +574,7 @@ func TestHandleDone_NoReplyFallback(t *testing.T) {
 
 	_, err = store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Now(),
 		TimeIndex:   0,
 		ScheduledAt: time.Now().Add(-1 * time.Hour),
 		Status:      "pending",
@@ -609,6 +615,7 @@ func TestHandleDone_AlreadyDone(t *testing.T) {
 
 	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Now(),
 		TimeIndex:   0,
 		ScheduledAt: time.Now().Add(-1 * time.Hour),
 		Status:      "done",
@@ -653,6 +660,7 @@ func TestHandleDone_OkSynonym(t *testing.T) {
 
 	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Now(),
 		TimeIndex:   0,
 		ScheduledAt: time.Now().Add(-1 * time.Hour),
 		Status:      "pending",
@@ -697,6 +705,7 @@ func TestHandleDone_PlusSynonym(t *testing.T) {
 
 	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Now(),
 		TimeIndex:   0,
 		ScheduledAt: time.Now().Add(-1 * time.Hour),
 		Status:      "pending",
@@ -751,12 +760,14 @@ func TestHandleSchedule_Today(t *testing.T) {
 
 	store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     now,
 		TimeIndex:   0,
 		ScheduledAt: today09,
 		Status:      "done",
 	})
 	store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     now,
 		TimeIndex:   1,
 		ScheduledAt: today12,
 		Status:      "pending",
@@ -796,6 +807,7 @@ func TestHandleSchedule_Tomorrow(t *testing.T) {
 
 	store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     tomorrow,
 		TimeIndex:   0,
 		ScheduledAt: tomorrow10,
 		Status:      "pending",
@@ -915,6 +927,7 @@ func TestHandleSkip_Active(t *testing.T) {
 	now := time.Now().Truncate(time.Second)
 	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     now,
 		TimeIndex:   0,
 		ScheduledAt: now.Add(-1 * time.Hour),
 		Status:      "pending",
@@ -1012,6 +1025,7 @@ func TestHandleSnooze(t *testing.T) {
 	originalTime := time.Now().Add(-1 * time.Hour).Truncate(time.Second)
 	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     originalTime,
 		TimeIndex:   0,
 		ScheduledAt: originalTime,
 		Status:      "pending",
@@ -1134,6 +1148,7 @@ func TestHandleDone_WhilePaused(t *testing.T) {
 
 	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Now(),
 		TimeIndex:   0,
 		ScheduledAt: time.Now().Add(-1 * time.Hour),
 		Status:      "pending",
@@ -1187,6 +1202,7 @@ func TestHandleDone_WithTime_Past(t *testing.T) {
 
 	store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Now(),
 		TimeIndex:   0,
 		ScheduledAt: time.Now().Add(-2 * time.Hour),
 		Status:      "pending",
@@ -1220,6 +1236,7 @@ func TestHandleDone_TimeConfirm_Yes(t *testing.T) {
 
 	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Now(),
 		TimeIndex:   0,
 		ScheduledAt: time.Now().Add(-2 * time.Hour),
 		Status:      "pending",
@@ -1271,6 +1288,7 @@ func TestHandleDone_WithTime_Future(t *testing.T) {
 	})
 	store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Now(),
 		TimeIndex:   0,
 		ScheduledAt: time.Now().Add(-2 * time.Hour),
 		Status:      "pending",
@@ -1316,12 +1334,14 @@ func TestHandleDelete(t *testing.T) {
 	// Create instances
 	store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Now(),
 		TimeIndex:   0,
 		ScheduledAt: time.Now(),
 		Status:      "pending",
 	})
 	store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Now(),
 		TimeIndex:   1,
 		ScheduledAt: time.Now().Add(3 * time.Hour),
 		Status:      "pending",
@@ -1411,6 +1431,7 @@ func TestHandleDone_WithTime_Reply(t *testing.T) {
 	// Create two pending instances — the first one is not the last active
 	inst1, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Now(),
 		TimeIndex:   0,
 		ScheduledAt: time.Now().Add(-2 * time.Hour),
 		Status:      "pending",
@@ -1419,6 +1440,7 @@ func TestHandleDone_WithTime_Reply(t *testing.T) {
 
 	inst2, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
+		ForDate:     time.Now(),
 		TimeIndex:   1,
 		ScheduledAt: time.Now().Add(-1 * time.Hour),
 		Status:      "pending",
