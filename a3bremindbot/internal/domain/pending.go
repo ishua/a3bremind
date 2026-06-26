@@ -46,8 +46,14 @@ func (s *Scheduler) processInstance(inst store.ReminderInstance, now time.Time) 
 
 	switch {
 	case msgCount == 0:
-		// First notification.
+		// First notification — format time in user's timezone.
 		scheduledStr := inst.ScheduledAt.Format("15:04")
+		if user.Timezone != "" {
+			loc, err := time.LoadLocation(user.Timezone)
+			if err == nil {
+				scheduledStr = inst.ScheduledAt.In(loc).Format("15:04")
+			}
+		}
 		text = fmt.Sprintf("⏰ %s · %s", scheduledStr, reminder.Label)
 
 	case msgCount < RepeatCount:
