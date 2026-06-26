@@ -1,4 +1,4 @@
-.PHONY: test test-v test-store test-race test-all
+.PHONY: test test-v test-store test-race test-all tag
 
 # Run all tests with cached results.
 test:
@@ -19,3 +19,9 @@ test-race:
 # Run all tests verbosely with race detection.
 test-all:
 	go test ./... -v -race -count=1
+
+# Create and push a git tag (usage: make tag v1.2.3).
+tag:
+	@if [ -z "$(TAG)" ]; then echo "Usage: make tag TAG=<version> (e.g. make tag TAG=v1.1.3)"; exit 1; fi
+	git tag "$(TAG)"
+	git push origin "$(TAG)"
