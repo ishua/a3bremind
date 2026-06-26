@@ -37,7 +37,8 @@ func (h *Handler) handleList(update tgbotapi.Update) {
 		}
 
 		sb.WriteString(fmt.Sprintf("%s · %s\n", label, r.Repeat))
-		sb.WriteString(fmt.Sprintf("  🆔 %s\n", r.ID))
+		sb.WriteString(fmt.Sprintf("  `/delete %s`\n", r.ID))
+		sb.WriteString(fmt.Sprintf("  `/list instances %s`\n", r.ID))
 
 		if len(r.Times) > 0 {
 			timesStr := strings.Join(r.Times, " ")

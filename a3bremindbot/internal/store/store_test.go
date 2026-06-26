@@ -1056,6 +1056,144 @@ func TestDeleteReminderInstances_NoInstances(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// DeleteInstancesAfterIndex tests
+// ---------------------------------------------------------------------------
+
+func TestDeleteInstancesAfterIndex(t *testing.T) {
+	db := newTestDB(t)
+
+	u, _ := GetOrCreate(db, 950)
+	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Test", Times: []string{"09:00", "10:00", "11:00"}, Repeat: "daily"})
+
+	// Create 3 instances with indices 0, 1, 2.
+	inst0, _ := CreateInstance(db, ReminderInstance{
+		ReminderID:  r.ID,
+		ForDate:     time.Now(),
+		TimeIndex:   0,
+		ScheduledAt: time.Now(),
+		Status:      "pending",
+	})
+	inst1, _ := CreateInstance(db, ReminderInstance{
+		ReminderID:  r.ID,
+		ForDate:     time.Now(),
+		TimeIndex:   1,
+		ScheduledAt: time.Now(),
+		Status:      "pending",
+	})
+	inst2, _ := CreateInstance(db, ReminderInstance{
+		ReminderID:  r.ID,
+		ForDate:     time.Now(),
+		TimeIndex:   2,
+		ScheduledAt: time.Now(),
+		Status:      "pending",
+	})
+
+	// Delete instances with time_index > 0 (should delete inst1 and inst2).
+	err := DeleteInstancesAfterIndex(db, r.ID, 0)
+	require.NoError(t, err)
+
+	// inst0 should still exist.
+	got, err := GetInstanceByID(db, inst0.ID)
+	require.NoError(t, err)
+	assert.Equal(t, inst0.ID, got.ID)
+
+	// inst1 and inst2 should be gone.
+	_, err = GetInstanceByID(db, inst1.ID)
+	assert.ErrorContains(t, err, "not found")
+
+	_, err = GetInstanceByID(db, inst2.ID)
+	assert.ErrorContains(t, err, "not found")
+}
+
+func TestDeleteInstancesAfterIndex_RemovesOnlyAfter(t *testing.T) {
+	db := newTestDB(t)
+
+	u, _ := GetOrCreate(db, 951)
+	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Test", Times: []string{"09:00", "10:00", "11:00"}, Repeat: "daily"})
+
+	inst0, _ := CreateInstance(db, ReminderInstance{
+		ReminderID:  r.ID,
+		ForDate:     time.Now(),
+		TimeIndex:   0,
+		ScheduledAt: time.Now(),
+		Status:      "pending",
+	})
+	inst1, _ := CreateInstance(db, ReminderInstance{
+		ReminderID:  r.ID,
+		ForDate:     time.Now(),
+		TimeIndex:   1,
+		ScheduledAt: time.Now(),
+		Status:      "pending",
+	})
+
+	// Delete instances with time_index > 1 (should delete nothing).
+	err := DeleteInstancesAfterIndex(db, r.ID, 1)
+	require.NoError(t, err)
+
+	// Both should still exist.
+	got0, err := GetInstanceByID(db, inst0.ID)
+	require.NoError(t, err)
+	assert.Equal(t, inst0.ID, got0.ID)
+
+	got1, err := GetInstanceByID(db, inst1.ID)
+	require.NoError(t, err)
+	assert.Equal(t, inst1.ID, got1.ID)
+}
+
+func TestDeleteInstancesAfterIndex_NoInstances(t *testing.T) {
+	db := newTestDB(t)
+
+	// Deleting for a reminder with no instances should not error.
+	err := DeleteInstancesAfterIndex(db, "nonexistent", 0)
+	require.NoError(t, err)
+}
+
+func TestDeleteInstancesAfterIndex_OnlyAffectsCorrectReminder(t *testing.T) {
+	db := newTestDB(t)
+
+	u, _ := GetOrCreate(db, 952)
+	r1, _ := Create(db, Reminder{UserID: u.ID, Label: "R1", Times: []string{"09:00"}, Repeat: "daily"})
+	r2, _ := Create(db, Reminder{UserID: u.ID, Label: "R2", Times: []string{"10:00"}, Repeat: "daily"})
+
+	// Create instances for both reminders.
+	instR1, _ := CreateInstance(db, ReminderInstance{
+		ReminderID:  r1.ID,
+		ForDate:     time.Now(),
+		TimeIndex:   0,
+		ScheduledAt: time.Now(),
+		Status:      "pending",
+	})
+	CreateInstance(db, ReminderInstance{
+		ReminderID:  r1.ID,
+		ForDate:     time.Now(),
+		TimeIndex:   1,
+		ScheduledAt: time.Now(),
+		Status:      "pending",
+	})
+	instR2, _ := CreateInstance(db, ReminderInstance{
+		ReminderID:  r2.ID,
+		ForDate:     time.Now(),
+		TimeIndex:   0,
+		ScheduledAt: time.Now(),
+		Status:      "pending",
+	})
+
+	// Delete from r1 with time_index > 0.
+	err := DeleteInstancesAfterIndex(db, r1.ID, 0)
+	require.NoError(t, err)
+
+	// r1 instance with index 0 should still exist.
+	got, err := GetInstanceByID(db, instR1.ID)
+	require.NoError(t, err)
+	assert.Equal(t, instR1.ID, got.ID)
+
+	// r2 instance should be untouched.
+	got2, err := GetInstanceByID(db, instR2.ID)
+	require.NoError(t, err)
+	assert.Equal(t, instR2.ID, got2.ID)
+}
+
+// ---------------------------------------------------------------------------
 // SetStatusWithDoneAt tests
 // ---------------------------------------------------------------------------
 

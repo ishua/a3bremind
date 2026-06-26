@@ -216,6 +216,17 @@ func DeleteReminderInstances(db  Querier , reminderID string) error {
 	return nil
 }
 
+// DeleteInstancesAfterIndex deletes all instances for a reminder with time_index > fromIndex.
+// Used when marking an instance as done to delete subsequent instances before recreating the chain.
+func DeleteInstancesAfterIndex(db Querier, reminderID string, fromIndex int) error {
+	const query = `DELETE FROM reminder_instances WHERE reminder_id = ? AND time_index > ?`
+	_, err := db.Exec(query, reminderID, fromIndex)
+	if err != nil {
+		return fmt.Errorf("delete instances after index: %w", err)
+	}
+	return nil
+}
+
 // SetStatusWithDoneAt updates the status and done_at of a reminder instance.
 // Intended for "done" status with a specific doneAt time.
 func SetStatusWithDoneAt(db  Querier , id string, status string, doneAt time.Time) error {

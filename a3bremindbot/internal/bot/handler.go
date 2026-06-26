@@ -106,6 +106,8 @@ func (h *Handler) handleCommand(update tgbotapi.Update, text string) {
 		h.handleAdd(update)
 	case strings.HasPrefix(text, "/schedule"):
 		h.handleSchedule(update)
+	case strings.HasPrefix(text, "/list instances"):
+		h.handleListInstances(update)
 	case strings.HasPrefix(text, "/list"):
 		h.handleList(update)
 	case strings.HasPrefix(text, "/skip"):
@@ -120,6 +122,8 @@ func (h *Handler) handleCommand(update tgbotapi.Update, text string) {
 		h.handleDelete(update)
 	case strings.HasPrefix(text, "/help"):
 		h.handleHelp(update)
+	case strings.HasPrefix(text, "/done"):
+		h.handleDoneByUUID(update)
 	default:
 		h.sendText(update.Message.Chat.ID, "Неизвестная команда")
 	}

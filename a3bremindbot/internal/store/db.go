@@ -75,7 +75,7 @@ func migrate(db *sql.DB) error {
 	indexStatements := []string{
 		`CREATE INDEX IF NOT EXISTS idx_instances_reminder_id ON reminder_instances(reminder_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_instances_scheduled_at_status ON reminder_instances(scheduled_at, status)`,
-		`CREATE INDEX IF NOT EXISTS idx_instances_user_for_date ON reminder_instances(user_id, for_date, status)`,
+		`CREATE INDEX IF NOT EXISTS idx_instances_reminder_for_date ON reminder_instances(reminder_id, for_date)`,
 	}
 	for _, stmt := range indexStatements {
 		if _, err := db.Exec(stmt); err != nil {
