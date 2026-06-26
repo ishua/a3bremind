@@ -138,3 +138,12 @@ func (h *Handler) sendText(chatID int64, text string) {
 		slog.Error("failed to send telegram message", "chat_id", chatID, "error", err)
 	}
 }
+
+// sendMarkdown отправляет сообщение с Markdown-парсингом.
+func (h *Handler) sendMarkdown(chatID int64, text string) {
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ParseMode = tgbotapi.ModeMarkdown
+	if _, err := h.bot.Send(msg); err != nil {
+		slog.Error("failed to send markdown message", "chat_id", chatID, "error", err)
+	}
+}

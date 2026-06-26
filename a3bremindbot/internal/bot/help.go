@@ -9,7 +9,7 @@ func (h *Handler) handleHelp(update tgbotapi.Update) {
 		"/start — начать работу с ботом\n" +
 		"/settings timezone Europe/Berlin — установить часовой пояс\n" +
 		"/add \"Название\" daily|once [gap:Nh|Nm] HH:MM ... — создать напоминание\n" +
-		"/schedule [tomorrow] — показать расписание\n" +
+		"/schedule — показать расписание на сегодня\n" +
 		"/list — все шаблоны напоминаний\n" +
 		"/skip — пропустить активное напоминание\n" +
 		"/snooze N — отложить на N минут\n" +

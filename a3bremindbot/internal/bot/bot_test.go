@@ -58,7 +58,7 @@ func setup(t *testing.T) (*sql.DB, *mockBot, *bot.Handler) {
 	mock := &mockBot{}
 	s := domain.New(db, bot.NewNotifier(mock))
 	t.Cleanup(s.Stop)
-	h := bot.NewHandler(db, mock, s)
+	h := bot.NewHandler(db, mock, s, "test")
 	return db, mock, h
 }
 
@@ -787,44 +787,6 @@ func TestHandleSchedule_Today(t *testing.T) {
 	assert.Contains(t, text, "⏳")
 	assert.Contains(t, text, "09:00")
 	assert.Contains(t, text, "12:00")
-}
-
-func TestHandleSchedule_Tomorrow(t *testing.T) {
-	db, mock, h := setup(t)
-
-	user, err := store.GetOrCreate(db, 12345)
-	require.NoError(t, err)
-	err = store.SetTimezone(db, user.ID, "UTC")
-	require.NoError(t, err)
-
-	r, err := store.Create(db, store.Reminder{
-		UserID: user.ID,
-		Label:  "Tomorrow reminder",
-		Times:  []string{"10:00"},
-		Repeat: "daily",
-	})
-	require.NoError(t, err)
-
-	now := time.Now().Truncate(time.Second)
-	tomorrow := now.Add(24 * time.Hour)
-	tomorrow10 := time.Date(tomorrow.Year(), tomorrow.Month(), tomorrow.Day(), 10, 0, 0, 0, time.UTC)
-
-	store.CreateInstance(db, store.ReminderInstance{
-		ReminderID:  r.ID,
-		ForDate:     tomorrow,
-		TimeIndex:   0,
-		ScheduledAt: tomorrow10,
-		Status:      "pending",
-	})
-
-	upd := updateWithCommand("/schedule tomorrow")
-	h.HandleUpdate(upd)
-
-	text := mock.LastText()
-	assert.Contains(t, text, "📅")
-	assert.Contains(t, text, "завтра")
-	assert.Contains(t, text, "Tomorrow reminder")
-	assert.Contains(t, text, "10:00")
 }
 
 func TestHandleSchedule_Empty(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 	"github.com/a3bremind/a3bremindbot/internal/store"
 )
 
-// handleSchedule обрабатывает /schedule и /schedule tomorrow.
+// handleSchedule обрабатывает /schedule.
 func (h *Handler) handleSchedule(update tgbotapi.Update) {
 	user, err := store.GetOrCreate(h.db, update.Message.Chat.ID)
 	if err != nil {
@@ -28,16 +28,9 @@ func (h *Handler) handleSchedule(update tgbotapi.Update) {
 		return
 	}
 
-	// Парсим аргумент: может быть "tomorrow"
-	parts := strings.Fields(update.Message.Text)
 	now := time.Now().In(loc)
-	date := now
 
-	if len(parts) > 1 && strings.ToLower(parts[1]) == "tomorrow" {
-		date = now.Add(24 * time.Hour)
-	}
-
-	instances, err := store.GetInstancesByUserAndDay(h.db, user.ID, date, loc)
+	instances, err := store.GetInstancesByUserAndDay(h.db, user.ID, now, loc)
 	if err != nil {
 		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
 		return
@@ -55,7 +48,7 @@ func (h *Handler) handleSchedule(update tgbotapi.Update) {
 	}
 
 	groupMap := make(map[string]*instanceGroup)
-	var groupOrder []string // сохраняем порядок
+	var groupOrder []string
 
 	for _, inst := range instances {
 		if _, ok := groupMap[inst.ReminderID]; !ok {
@@ -72,14 +65,8 @@ func (h *Handler) handleSchedule(update tgbotapi.Update) {
 		groupMap[inst.ReminderID].Instances = append(groupMap[inst.ReminderID].Instances, inst)
 	}
 
-	// Формируем ответ
-	dateStr := "на сегодня"
-	if len(parts) > 1 && strings.ToLower(parts[1]) == "tomorrow" {
-		dateStr = "на завтра"
-	}
-
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("📅 Расписание %s:\n\n", dateStr))
+	sb.WriteString("📅 Расписание на сегодня:\n\n")
 
 	for _, reminderID := range groupOrder {
 		group := groupMap[reminderID]

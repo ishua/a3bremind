@@ -54,7 +54,7 @@ func (h *Handler) handleList(update tgbotapi.Update) {
 		sb.WriteString("\n")
 	}
 
-	h.sendText(update.Message.Chat.ID, strings.TrimSpace(sb.String()))
+	h.sendMarkdown(update.Message.Chat.ID, strings.TrimSpace(sb.String()))
 }
 
 // formatGap форматирует минуты в читаемый вид: 180 → "3ч", 30 → "30м", 90 → "1ч 30м".
