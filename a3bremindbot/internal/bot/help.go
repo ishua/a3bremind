@@ -8,7 +8,7 @@ func (h *Handler) handleHelp(update tgbotapi.Update) {
 	text := "*Доступные команды*\n\n" +
 		"/start — начать работу с ботом\n" +
 		"/settings timezone Europe/Berlin — установить часовой пояс\n" +
-		"/add \"Название\" daily|once [gap:Nh|Nm] HH:MM — создать напоминание\n" +
+		"/add \"Название\" daily|once [gap:Nh|Nm] HH:MM ... — создать напоминание\n" +
 		"/schedule [tomorrow] — показать расписание\n" +
 		"/list — все шаблоны напоминаний\n" +
 		"/skip — пропустить активное напоминание\n" +
@@ -16,7 +16,9 @@ func (h *Handler) handleHelp(update tgbotapi.Update) {
 		"/pause — приостановить все напоминания\n" +
 		"/resume — возобновить напоминания\n" +
 		"/delete ID — удалить напоминание\n" +
-		"/help — показать эту справку"
+		"/help — показать эту справку\n\n" +
+		"Несколько времен — для серии напоминаний:\n" +
+		"`/add \"Медикамент\" daily 08:00 12:00 20:00`"
 
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID, text)
 	msg.ParseMode = tgbotapi.ModeMarkdown
