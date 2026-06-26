@@ -27,15 +27,17 @@ type Handler struct {
 	db             *sql.DB
 	bot            BotAPI
 	scheduler      *domain.Scheduler
+	version        string
 	pendingConfirm sync.Map // chatID (int64) -> pendingConfirmEntry
 }
 
 // NewHandler создаёт Handler.
-func NewHandler(db *sql.DB, bot BotAPI, scheduler *domain.Scheduler) *Handler {
+func NewHandler(db *sql.DB, bot BotAPI, scheduler *domain.Scheduler, version string) *Handler {
 	return &Handler{
 		db:        db,
 		bot:       bot,
 		scheduler: scheduler,
+		version:   version,
 	}
 }
 

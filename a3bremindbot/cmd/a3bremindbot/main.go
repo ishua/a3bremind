@@ -46,7 +46,7 @@ func main() {
 	scheduler.Start()
 	defer scheduler.Stop()
 
-	handler := bot.NewHandler(db, botAPI, scheduler)
+	handler := bot.NewHandler(db, botAPI, scheduler, version)
 
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60

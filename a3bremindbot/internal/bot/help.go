@@ -18,7 +18,8 @@ func (h *Handler) handleHelp(update tgbotapi.Update) {
 		"/delete ID — удалить напоминание\n" +
 		"/help — показать эту справку\n\n" +
 		"Несколько времен — для серии напоминаний:\n" +
-		"`/add \"Медикамент\" daily 08:00 12:00 20:00`"
+		"`/add \"Медикамент\" daily 08:00 12:00 20:00`\n\n" +
+		"Версия: " + h.version
 
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID, text)
 	msg.ParseMode = tgbotapi.ModeMarkdown
