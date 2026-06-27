@@ -9,7 +9,9 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-// handleSkip обрабатывает /skip — пропускает текущее напоминание.
+// handleSkip обрабатывает /skip — пропускает напоминание.
+// Работает только при reply на уведомление бота.
+// Для skip без reply используй inline-кнопку ⏭ Skip на уведомлении.
 func (h *Handler) handleSkip(update tgbotapi.Update) {
 	user, err := store.GetOrCreate(h.db, update.Message.Chat.ID)
 	if err != nil {
@@ -17,18 +19,35 @@ func (h *Handler) handleSkip(update tgbotapi.Update) {
 		return
 	}
 
-	// Получаем последний активный Instance
-	active, err := store.GetActiveByUser(h.db, user.ID)
-	if err != nil || len(active) == 0 {
-		h.sendText(update.Message.Chat.ID, "Нет активных напоминаний")
+	// Требуем reply на уведомление бота
+	if update.Message.ReplyToMessage == nil {
+		h.sendText(update.Message.Chat.ID, "Используй reply на уведомление бота или inline-кнопку ⏭ Skip.")
 		return
 	}
-	instance := active[len(active)-1]
 
-	// Загружаем reminder для label
-	reminder, err := store.GetByID(h.db, instance.ReminderID)
+	// Находим Instance по reply
+	replyMsgID := update.Message.ReplyToMessage.MessageID
+	instanceID, err := store.GetInstanceIDByReply(h.db, replyMsgID)
 	if err != nil {
-		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
+		h.sendText(update.Message.Chat.ID, "Не удалось найти напоминание")
+		return
+	}
+
+	instance, err := store.GetInstanceByID(h.db, instanceID)
+	if err != nil {
+		h.sendText(update.Message.Chat.ID, "Не удалось найти напоминание")
+		return
+	}
+
+	// Проверяем принадлежность пользователю
+	reminder, err := store.GetByID(h.db, instance.ReminderID)
+	if err != nil || reminder.UserID != user.ID {
+		h.sendText(update.Message.Chat.ID, "Это не твоё напоминание")
+		return
+	}
+
+	if instance.Status != "pending" {
+		h.sendText(update.Message.Chat.ID, "Это напоминание уже неактуально")
 		return
 	}
 

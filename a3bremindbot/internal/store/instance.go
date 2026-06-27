@@ -83,35 +83,6 @@ func GetPending(db Querier, now time.Time) ([]ReminderInstance, error) {
 	return scanReminderInstances(rows)
 }
 
-// GetActiveByUser retrieves all pending instances for a user (for done without reply fallback).
-func GetActiveByUser(db Querier, userID string) ([]ReminderInstance, error) {
-	const query = `SELECT ri.id, ri.reminder_id, ri.for_date, ri.time_index, ri.scheduled_at, ri.done_at, ri.status, ri.message_ids, ri.created_at, ri.updated_at
-		FROM reminder_instances ri
-		JOIN reminders r ON r.id = ri.reminder_id
-		WHERE r.user_id = ? AND ri.status = 'pending'
-		ORDER BY ri.scheduled_at DESC`
-
-	rows, err := db.Query(query, userID)
-	if err != nil {
-		return nil, fmt.Errorf("get active by user: %w", err)
-	}
-	defer rows.Close() //nolint:errcheck // deferred close is idiomatic
-
-	return scanReminderInstances(rows)
-}
-
-// GetInstanceByMessageID retrieves a reminder instance by a message_id (for reply binding).
-// Uses json_each to avoid a full table scan.
-func GetInstanceByMessageID(db Querier, messageID int) (ReminderInstance, error) {
-	const query = `SELECT ri.id, ri.reminder_id, ri.for_date, ri.time_index, ri.scheduled_at, ri.done_at, ri.status, ri.message_ids, ri.created_at, ri.updated_at
-		FROM reminder_instances ri, json_each(ri.message_ids)
-		WHERE json_extract(json_each.value, '$.message_id') = ?
-		LIMIT 1`
-
-	row := db.QueryRow(query, messageID)
-	return scanReminderInstance(row)
-}
-
 // GetInstancesByUserAndDay retrieves all instances for a user on a specific day in their timezone.
 // Filters by for_date — the day the instance belongs to, regardless of scheduled_at shifts.
 func GetInstancesByUserAndDay(db Querier, userID string, date time.Time, loc *time.Location) ([]ReminderInstance, error) {

@@ -460,12 +460,18 @@ func TestNextInstance_NextInChain(t *testing.T) {
 	_, err = NextInstance(db, inst, now)
 	require.NoError(t, err)
 
-	instances, err := store.GetActiveByUser(db, u.ID)
+	instances, err := store.GetReminderInstancesByReminder(db, r.ID)
 	require.NoError(t, err)
-	require.Len(t, instances, 1)
-	assert.Equal(t, 1, instances[0].TimeIndex)
-	assert.Equal(t, r.ID, instances[0].ReminderID)
-	assert.Equal(t, "pending", instances[0].Status)
+	var pending []store.ReminderInstance
+	for _, i := range instances {
+		if i.Status == "pending" {
+			pending = append(pending, i)
+		}
+	}
+	require.Len(t, pending, 1)
+	assert.Equal(t, 1, pending[0].TimeIndex)
+	assert.Equal(t, r.ID, pending[0].ReminderID)
+	assert.Equal(t, "pending", pending[0].Status)
 }
 
 func TestNextInstance_LastIndex(t *testing.T) {
@@ -490,9 +496,15 @@ func TestNextInstance_LastIndex(t *testing.T) {
 	_, err = NextInstance(db, inst, now)
 	require.NoError(t, err)
 
-	instances, err := store.GetActiveByUser(db, u.ID)
+	instances, err := store.GetReminderInstancesByReminder(db, r.ID)
 	require.NoError(t, err)
-	assert.Empty(t, instances)
+	var pending []store.ReminderInstance
+	for _, i := range instances {
+		if i.Status == "pending" {
+			pending = append(pending, i)
+		}
+	}
+	assert.Empty(t, pending)
 }
 
 // ---------------------------------------------------------------------------
@@ -598,13 +610,19 @@ func TestNextInstance_WithReschedule(t *testing.T) {
 	_, err = NextInstance(db, inst, now)
 	require.NoError(t, err)
 
-	instances, err := store.GetActiveByUser(db, u.ID)
+	instances, err := store.GetReminderInstancesByReminder(db, r.ID)
 	require.NoError(t, err)
-	require.Len(t, instances, 1)
-	assert.Equal(t, 1, instances[0].TimeIndex)
+	var pending []store.ReminderInstance
+	for _, i := range instances {
+		if i.Status == "pending" {
+			pending = append(pending, i)
+		}
+	}
+	require.Len(t, pending, 1)
+	assert.Equal(t, 1, pending[0].TimeIndex)
 
 	minExpected := now.Add(3 * time.Hour)
-	assert.True(t, instances[0].ScheduledAt.Unix() >= minExpected.Unix())
+	assert.True(t, pending[0].ScheduledAt.Unix() >= minExpected.Unix())
 }
 
 func TestNextInstance_RescheduleWarning(t *testing.T) {
@@ -671,11 +689,17 @@ func TestNextInstance_ForDateUnchanged(t *testing.T) {
 	_, err = NextInstance(db, inst, now)
 	require.NoError(t, err)
 
-	active, err := store.GetActiveByUser(db, u.ID)
+	instances, err := store.GetReminderInstancesByReminder(db, r.ID)
 	require.NoError(t, err)
-	require.Len(t, active, 1)
-	assert.Equal(t, 1, active[0].TimeIndex)
-	assert.Equal(t, originalForDate.Unix(), active[0].ForDate.Unix())
+	var pending []store.ReminderInstance
+	for _, i := range instances {
+		if i.Status == "pending" {
+			pending = append(pending, i)
+		}
+	}
+	require.Len(t, pending, 1)
+	assert.Equal(t, 1, pending[0].TimeIndex)
+	assert.Equal(t, originalForDate.Unix(), pending[0].ForDate.Unix())
 }
 
 // ---------------------------------------------------------------------------

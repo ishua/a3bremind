@@ -448,10 +448,10 @@ func TestHandleAdd_Series(t *testing.T) {
 	assert.Nil(t, reminders[0].MinGap)
 
 	// First instance should be at time_index=0.
-	active, err := store.GetActiveByUser(db, user.ID)
+	insts, err := store.GetReminderInstancesByReminder(db, reminders[0].ID)
 	require.NoError(t, err)
-	require.Len(t, active, 1)
-	assert.Equal(t, 0, active[0].TimeIndex)
+	require.Len(t, insts, 1)
+	assert.Equal(t, 0, insts[0].TimeIndex)
 }
 
 func TestHandleAdd_SeriesWithGap(t *testing.T) {
@@ -586,10 +586,16 @@ func TestHandleDone_NextInstanceCreated(t *testing.T) {
 	h.HandleUpdate(upd)
 
 	// Should have created a new instance with time_index=1.
-	active, err := store.GetActiveByUser(db, user.ID)
+	insts, err := store.GetReminderInstancesByReminder(db, r.ID)
 	require.NoError(t, err)
-	require.Len(t, active, 1)
-	assert.Equal(t, 1, active[0].TimeIndex)
+	var pending []store.ReminderInstance
+	for _, i := range insts {
+		if i.Status == "pending" {
+			pending = append(pending, i)
+		}
+	}
+	require.Len(t, pending, 1)
+	assert.Equal(t, 1, pending[0].TimeIndex)
 }
 
 func TestHandleDone_NoReplyFallback(t *testing.T) {
@@ -1001,7 +1007,25 @@ func TestHandleSkip_Active(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	upd := updateWithCommand("/skip")
+	// Add message ID and reply mapping (as scheduler would).
+	err = store.AddMessageID(db, inst.ID, 100, time.Now())
+	require.NoError(t, err)
+	err = store.InsertInstanceReply(db, 100, inst.ID)
+	require.NoError(t, err)
+
+	upd := tgbotapi.Update{
+		Message: &tgbotapi.Message{
+			Text: "/skip",
+			Chat: &tgbotapi.Chat{ID: 12345},
+			From: &tgbotapi.User{ID: 12345},
+			Entities: []tgbotapi.MessageEntity{
+				{Type: "bot_command", Offset: 0, Length: 5},
+			},
+			ReplyToMessage: &tgbotapi.Message{
+				MessageID: 100,
+			},
+		},
+	}
 	h.HandleUpdate(upd)
 
 	text := mock.LastText()
@@ -1015,20 +1039,27 @@ func TestHandleSkip_Active(t *testing.T) {
 	assert.Equal(t, "skipped", got.Status)
 
 	// Verify next instance was created (time_index=1)
-	active, err := store.GetActiveByUser(db, user.ID)
+	instances, err := store.GetReminderInstancesByReminder(db, r.ID)
 	require.NoError(t, err)
-	require.Len(t, active, 1)
-	assert.Equal(t, 1, active[0].TimeIndex)
+	var pending []store.ReminderInstance
+	for _, inst := range instances {
+		if inst.Status == "pending" {
+			pending = append(pending, inst)
+		}
+	}
+	require.Len(t, pending, 1)
+	assert.Equal(t, 1, pending[0].TimeIndex)
 }
 
-func TestHandleSkip_NoActive(t *testing.T) {
+func TestHandleSkip_NoReply(t *testing.T) {
 	_, mock, h := setup(t)
 
+	// /skip without reply should tell the user to use reply or inline button.
 	upd := updateWithCommand("/skip")
 	h.HandleUpdate(upd)
 
 	text := mock.LastText()
-	assert.Contains(t, text, "Нет активных напоминаний")
+	assert.Contains(t, text, "Используй reply")
 }
 
 func TestHandleSkip_LastIndex(t *testing.T) {
@@ -1049,25 +1080,49 @@ func TestHandleSkip_LastIndex(t *testing.T) {
 	require.NoError(t, err)
 
 	now := time.Now().Truncate(time.Second)
-	//nolint:errcheck // test setup
-	store.CreateInstance(db, store.ReminderInstance{
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
 		TimeIndex:   0,
 		ScheduledAt: now.Add(-1 * time.Hour),
 		Status:      "pending",
 	})
+	require.NoError(t, err)
 
-	upd := updateWithCommand("/skip")
+	// Add message ID and reply mapping.
+	err = store.AddMessageID(db, inst.ID, 100, time.Now())
+	require.NoError(t, err)
+	err = store.InsertInstanceReply(db, 100, inst.ID)
+	require.NoError(t, err)
+
+	upd := tgbotapi.Update{
+		Message: &tgbotapi.Message{
+			Text: "/skip",
+			Chat: &tgbotapi.Chat{ID: 12345},
+			From: &tgbotapi.User{ID: 12345},
+			Entities: []tgbotapi.MessageEntity{
+				{Type: "bot_command", Offset: 0, Length: 5},
+			},
+			ReplyToMessage: &tgbotapi.Message{
+				MessageID: 100,
+			},
+		},
+	}
 	h.HandleUpdate(upd)
 
 	// Should be skipped without creating next instance
 	text := mock.LastText()
 	assert.Contains(t, text, "⏭️")
 
-	// No active instances remain
-	active, err := store.GetActiveByUser(db, user.ID)
+	// No pending instances remain
+	instances, err := store.GetReminderInstancesByReminder(db, r.ID)
 	require.NoError(t, err)
-	assert.Empty(t, active)
+	var pending []store.ReminderInstance
+	for _, inst := range instances {
+		if inst.Status == "pending" {
+			pending = append(pending, inst)
+		}
+	}
+	assert.Empty(t, pending)
 }
 
 // ---------------------------------------------------------------------------
@@ -1100,8 +1155,25 @@ func TestHandleSnooze(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Snooze for 30 minutes
-	upd := updateWithCommand("/snooze 30")
+	// Add message ID and reply mapping.
+	err = store.AddMessageID(db, inst.ID, 100, time.Now())
+	require.NoError(t, err)
+	err = store.InsertInstanceReply(db, 100, inst.ID)
+	require.NoError(t, err)
+
+	upd := tgbotapi.Update{
+		Message: &tgbotapi.Message{
+			Text: "/snooze 30",
+			Chat: &tgbotapi.Chat{ID: 12345},
+			From: &tgbotapi.User{ID: 12345},
+			Entities: []tgbotapi.MessageEntity{
+				{Type: "bot_command", Offset: 0, Length: 8},
+			},
+			ReplyToMessage: &tgbotapi.Message{
+				MessageID: 100,
+			},
+		},
+	}
 	h.HandleUpdate(upd)
 
 	text := mock.LastText()
@@ -1143,14 +1215,15 @@ func TestHandleSnooze_OutOfRange(t *testing.T) {
 	assert.Contains(t, text, "Использование")
 }
 
-func TestHandleSnooze_NoActive(t *testing.T) {
+func TestHandleSnooze_NoReply(t *testing.T) {
 	_, mock, h := setup(t)
 
+	// /snooze N without reply should tell the user to use reply or inline button.
 	upd := updateWithCommand("/snooze 30")
 	h.HandleUpdate(upd)
 
 	text := mock.LastText()
-	assert.Contains(t, text, "Нет активных напоминаний")
+	assert.Contains(t, text, "Используй reply")
 }
 
 // ---------------------------------------------------------------------------
@@ -1368,10 +1441,16 @@ func TestHandleDone_TimeConfirm_Yes(t *testing.T) {
 	assert.Equal(t, 30, got.DoneAt.In(time.UTC).Minute())
 
 	// Next instance should be created
-	active, err := store.GetActiveByUser(db, user.ID)
+	insts, err := store.GetReminderInstancesByReminder(db, r.ID)
 	require.NoError(t, err)
-	require.Len(t, active, 1)
-	assert.Equal(t, 1, active[0].TimeIndex)
+	var pending []store.ReminderInstance
+	for _, i := range insts {
+		if i.Status == "pending" {
+			pending = append(pending, i)
+		}
+	}
+	require.Len(t, pending, 1)
+	assert.Equal(t, 1, pending[0].TimeIndex)
 }
 
 func TestHandleDone_WithTime_Future(t *testing.T) {
@@ -1690,10 +1769,16 @@ func TestHandleDoneByUUID_MissedToDone(t *testing.T) {
 	assert.ErrorContains(t, err, "not found")
 
 	// Verify a new instance was created at index 2
-	active, err := store.GetActiveByUser(db, user.ID)
+	insts, err := store.GetReminderInstancesByReminder(db, r.ID)
 	require.NoError(t, err)
-	require.Len(t, active, 1)
-	assert.Equal(t, 2, active[0].TimeIndex)
+	var pending []store.ReminderInstance
+	for _, i := range insts {
+		if i.Status == "pending" {
+			pending = append(pending, i)
+		}
+	}
+	require.Len(t, pending, 1)
+	assert.Equal(t, 2, pending[0].TimeIndex)
 }
 
 func TestHandleDoneByUUID_WithTime(t *testing.T) {
@@ -2064,10 +2149,16 @@ func TestHandleCallbackSkip_Success(t *testing.T) {
 	assert.Equal(t, "skipped", got.Status)
 
 	// Next instance should be created
-	active, err := store.GetActiveByUser(db, user.ID)
+	insts, err := store.GetReminderInstancesByReminder(db, r.ID)
 	require.NoError(t, err)
-	require.Len(t, active, 1)
-	assert.Equal(t, 1, active[0].TimeIndex)
+	var pending []store.ReminderInstance
+	for _, i := range insts {
+		if i.Status == "pending" {
+			pending = append(pending, i)
+		}
+	}
+	require.Len(t, pending, 1)
+	assert.Equal(t, 1, pending[0].TimeIndex)
 }
 
 func TestHandleCallback_InvalidData(t *testing.T) {

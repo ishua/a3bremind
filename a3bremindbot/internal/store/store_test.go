@@ -385,72 +385,6 @@ func TestGetPending(t *testing.T) {
 	assert.Equal(t, 0, pending[0].TimeIndex)
 }
 
-func TestGetActiveByUser(t *testing.T) {
-	db := newTestDB(t)
-
-	u, _ := GetOrCreate(db, 24)
-	u2, _ := GetOrCreate(db, 25)
-	r, _ := Create(db, Reminder{UserID: u.ID, Label: "Active test", Times: []string{"09:00"}, Repeat: "daily"})
-	r2, _ := Create(db, Reminder{UserID: u2.ID, Label: "Other user", Times: []string{"09:00"}, Repeat: "daily"})
-
-	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: time.Now(), TimeIndex: 0, ScheduledAt: time.Now(), Status: "pending"}) //nolint:errcheck
-	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: time.Now(), TimeIndex: 1, ScheduledAt: time.Now(), Status: "pending"}) //nolint:errcheck
-	// This instance belongs to other user.
-	CreateInstance(db, ReminderInstance{ReminderID: r2.ID, ForDate: time.Now(), TimeIndex: 0, ScheduledAt: time.Now(), Status: "pending"}) //nolint:errcheck
-	// Done — should not appear.
-	CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: time.Now(), TimeIndex: 2, ScheduledAt: time.Now(), Status: "done"}) //nolint:errcheck
-
-	active, err := GetActiveByUser(db, u.ID)
-	require.NoError(t, err)
-	assert.Len(t, active, 2)
-}
-
-func TestGetInstanceByMessageID(t *testing.T) {
-	db := newTestDB(t)
-
-	u, _ := GetOrCreate(db, 26)
-	r, _ := Create(db, Reminder{UserID: u.ID, Label: "MsgID test", Times: []string{"09:00"}, Repeat: "daily"})
-
-	inst, _ := CreateInstance(db, ReminderInstance{
-		ReminderID:  r.ID,
-		ForDate:     time.Now(),
-		TimeIndex:   0,
-		ScheduledAt: time.Now(),
-		Status:      "pending",
-	})
-
-	// Add a message ID.
-	now := time.Now()
-	err := AddMessageID(db, inst.ID, 42, now)
-	require.NoError(t, err)
-
-	got, err := GetInstanceByMessageID(db, 42)
-	require.NoError(t, err)
-	assert.Equal(t, inst.ID, got.ID)
-
-	// Try with a second instance that also has a message ID.
-	inst2, _ := CreateInstance(db, ReminderInstance{
-		ReminderID:  r.ID,
-		ForDate:     time.Now(),
-		TimeIndex:   1,
-		ScheduledAt: time.Now(),
-		Status:      "pending",
-	})
-	err = AddMessageID(db, inst2.ID, 99, now)
-	require.NoError(t, err)
-
-	got2, err := GetInstanceByMessageID(db, 99)
-	require.NoError(t, err)
-	assert.Equal(t, inst2.ID, got2.ID)
-}
-
-func TestGetInstanceByMessageID_NotFound(t *testing.T) {
-	db := newTestDB(t)
-
-	_, err := GetInstanceByMessageID(db, 999)
-	assert.ErrorContains(t, err, "not found")
-}
-
 func TestGetLastByReminder(t *testing.T) {
 	db := newTestDB(t)
 
@@ -747,10 +681,10 @@ func TestTimeIndexBoundaries(t *testing.T) {
 	_, err = CreateInstance(db, ReminderInstance{ReminderID: r.ID, ForDate: time.Now(), TimeIndex: 100, ScheduledAt: time.Now()})
 	require.NoError(t, err)
 
-	// Both should be retrievable by GetActiveByUser.
-	active, err := GetActiveByUser(db, u.ID)
+	// Both should be retrievable by GetReminderInstancesByReminder.
+	instances, err := GetReminderInstancesByReminder(db, r.ID)
 	require.NoError(t, err)
-	assert.Len(t, active, 2)
+	assert.Len(t, instances, 2)
 }
 
 func TestGetUserByID(t *testing.T) {
