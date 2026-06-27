@@ -8,7 +8,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-// handleList обрабатывает /list — показывает все Reminder шаблоны.
+// handleList обрабатывает /list — показывает все Reminder шаблоны с инлайн-кнопками.
 func (h *Handler) handleList(update tgbotapi.Update) {
 	user, err := store.GetOrCreate(h.db, update.Message.Chat.ID)
 	if err != nil {
@@ -30,6 +30,8 @@ func (h *Handler) handleList(update tgbotapi.Update) {
 	var sb strings.Builder
 	sb.WriteString("📋 Все напоминания:\n\n")
 
+	var allButtons []tgbotapi.InlineKeyboardButton
+
 	for _, r := range reminders {
 		label := r.Label
 		if label == "" {
@@ -37,8 +39,6 @@ func (h *Handler) handleList(update tgbotapi.Update) {
 		}
 
 		fmt.Fprintf(&sb, "%s · %s\n", label, r.Repeat)
-		fmt.Fprintf(&sb, "  `/delete %s`\n", r.ID)
-		fmt.Fprintf(&sb, "  `/list instances %s`\n", r.ID)
 
 		if len(r.Times) > 0 {
 			timesStr := strings.Join(r.Times, " ")
@@ -52,9 +52,29 @@ func (h *Handler) handleList(update tgbotapi.Update) {
 		}
 
 		sb.WriteString("\n")
+
+		allButtons = append(allButtons,
+			tgbotapi.NewInlineKeyboardButtonData("🗑 Удалить", "del:"+r.ID),
+			tgbotapi.NewInlineKeyboardButtonData("📋 Экземпляры", "instances:"+r.ID),
+		)
 	}
 
-	h.sendMarkdown(update.Message.Chat.ID, strings.TrimSpace(sb.String()))
+	// Строим клавиатуру: по 2 кнопки (Удалить + Экземпляры) в ряд для каждого напоминания
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for i := 0; i < len(allButtons); i += 2 {
+		end := i + 2
+		if end > len(allButtons) {
+			end = len(allButtons)
+		}
+		rows = append(rows, allButtons[i:end])
+	}
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
+
+	msg := tgbotapi.NewMessage(update.Message.Chat.ID, strings.TrimSpace(sb.String()))
+	msg.ReplyMarkup = &keyboard
+	if _, err := h.bot.Send(msg); err != nil {
+		h.sendText(update.Message.Chat.ID, "Произошла ошибка")
+	}
 }
 
 // formatGap форматирует минуты в читаемый вид: 180 → "3ч", 30 → "30м", 90 → "1ч 30м".

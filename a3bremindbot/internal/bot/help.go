@@ -7,7 +7,7 @@ import (
 func (h *Handler) handleHelp(update tgbotapi.Update) {
 	text := "*Доступные команды*\n\n" +
 		"/start — начать работу с ботом\n" +
-		"/settings timezone Europe/Berlin — установить часовой пояс\n" +
+		"/settings timezone Europe/Moscow — установить часовой пояс\n" +
 		"/add \"Название\" daily|once [gap:Nh|Nm] HH:MM ... — создать напоминание\n" +
 		"/schedule — показать расписание на сегодня\n" +
 		"/list — все шаблоны напоминаний\n" +

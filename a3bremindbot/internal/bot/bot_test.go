@@ -54,6 +54,13 @@ func (m *mockBot) LastText() string {
 	return m.sent[len(m.sent)-1].Text
 }
 
+func (m *mockBot) LastSentMsg() tgbotapi.MessageConfig {
+	if len(m.sent) == 0 {
+		return tgbotapi.MessageConfig{}
+	}
+	return m.sent[len(m.sent)-1]
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -850,10 +857,35 @@ func TestHandleList_WithReminders(t *testing.T) {
 	assert.Contains(t, text, "07:00 11:00 15:00 18:00 21:00")
 	assert.Contains(t, text, "09:00")
 	assert.Contains(t, text, "gap: 3ч")
-	assert.Contains(t, text, "/delete")
-	assert.Contains(t, text, "/list instances")
-	// 🆔 should not appear anymore — replaced by clickable commands
+	// Should have inline buttons instead of text commands
+	assert.NotContains(t, text, "/delete")
+	assert.NotContains(t, text, "/list instances")
 	assert.NotContains(t, text, "🆔")
+
+	// Check inline keyboard buttons
+	msg := mock.LastSentMsg()
+	require.NotNil(t, msg.ReplyMarkup)
+	keyboard, ok := msg.ReplyMarkup.(*tgbotapi.InlineKeyboardMarkup)
+	require.True(t, ok, "expected InlineKeyboardMarkup")
+	require.GreaterOrEqual(t, len(keyboard.InlineKeyboard), 2)
+
+	// Find all callback data
+	allReminders, err := store.GetAll(db, user.ID)
+	require.NoError(t, err)
+	require.Len(t, allReminders, 2)
+	var callbackData []string
+	for _, row := range keyboard.InlineKeyboard {
+		for _, btn := range row {
+			if btn.CallbackData != nil {
+				callbackData = append(callbackData, *btn.CallbackData)
+			}
+		}
+	}
+	require.Len(t, callbackData, 4) // 2 reminders × 2 buttons each
+	assert.Contains(t, callbackData, "del:"+allReminders[0].ID)
+	assert.Contains(t, callbackData, "instances:"+allReminders[0].ID)
+	assert.Contains(t, callbackData, "del:"+allReminders[1].ID)
+	assert.Contains(t, callbackData, "instances:"+allReminders[1].ID)
 }
 
 func TestHandleList_Empty(t *testing.T) {
@@ -893,7 +925,7 @@ func TestHandleListInstances_ShowsInstances(t *testing.T) {
 
 	now := time.Now().Truncate(time.Second)
 	// Create instances for today
-	inst0, err := store.CreateInstance(db, store.ReminderInstance{
+	_, err = store.CreateInstance(db, store.ReminderInstance{
 		ReminderID:  r.ID,
 		ForDate:     now,
 		TimeIndex:   0,
@@ -927,10 +959,28 @@ func TestHandleListInstances_ShowsInstances(t *testing.T) {
 	assert.Contains(t, text, "✅ 07:00")
 	assert.Contains(t, text, "❌ 11:00")
 	assert.Contains(t, text, "⏳ 15:00")
-	// Should show /done commands with full UUID
-	assert.Contains(t, text, fmt.Sprintf("/done %s 07:00", inst0.ID))
-	assert.Contains(t, text, fmt.Sprintf("/done %s 11:00", inst1.ID))
-	assert.Contains(t, text, fmt.Sprintf("/done %s 15:00", inst2.ID))
+	// Should have inline buttons instead of /done text commands
+	assert.NotContains(t, text, "/done")
+
+	// Check inline keyboard — 2 buttons for missed+pending
+	msg := mock.LastSentMsg()
+	require.NotNil(t, msg.ReplyMarkup)
+	keyboard, ok := msg.ReplyMarkup.(*tgbotapi.InlineKeyboardMarkup)
+	require.True(t, ok, "expected InlineKeyboardMarkup")
+	require.GreaterOrEqual(t, len(keyboard.InlineKeyboard), 1)
+
+	var callbackData []string
+	for _, row := range keyboard.InlineKeyboard {
+		for _, btn := range row {
+			if btn.CallbackData != nil {
+				callbackData = append(callbackData, *btn.CallbackData)
+			}
+		}
+	}
+	require.Len(t, callbackData, 2) // missed + pending, done has no button
+	// inst1 is missed at 11:00, inst2 is pending at 15:00
+	assert.Contains(t, callbackData, "done_inst:"+inst1.ID+":11:00")
+	assert.Contains(t, callbackData, "done_inst:"+inst2.ID+":15:00")
 }
 
 func TestHandleListInstances_WrongUser(t *testing.T) {
@@ -2196,4 +2246,359 @@ func TestHandleCallback_NotFoundInstance(t *testing.T) {
 
 	require.Len(t, mock.callbacks, 1)
 	assert.Contains(t, mock.callbacks[0].Text, "не найдено")
+}
+
+// ---------------------------------------------------------------------------
+// Callback instances tests
+// ---------------------------------------------------------------------------
+
+func TestHandleCallbackInstances_Success(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Test",
+		Times:  []string{"07:00", "11:00", "15:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	now := time.Now().Truncate(time.Second)
+	// done instance — no button
+	_, err = store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		ForDate:     now,
+		TimeIndex:   0,
+		ScheduledAt: time.Date(now.Year(), now.Month(), now.Day(), 7, 0, 0, 0, time.UTC),
+		Status:      "done",
+	})
+	require.NoError(t, err)
+	// missed instance — button
+	inst1, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		ForDate:     now,
+		TimeIndex:   1,
+		ScheduledAt: time.Date(now.Year(), now.Month(), now.Day(), 11, 0, 0, 0, time.UTC),
+		Status:      "missed",
+	})
+	require.NoError(t, err)
+
+	upd := updateWithCallback("instances:"+r.ID, 12345, 12345, 100)
+	h.HandleUpdate(upd)
+
+	// Should answer callback with empty text (success, no popup)
+	require.Len(t, mock.callbacks, 1)
+	assert.Empty(t, mock.callbacks[0].Text)
+
+	// Should have sent a new message with instances
+	require.Len(t, mock.sent, 1)
+	text := mock.sent[0].Text
+	assert.Contains(t, text, "💊")
+	assert.Contains(t, text, "Test")
+	assert.Contains(t, text, "✅ 07:00")
+	assert.Contains(t, text, "❌ 11:00")
+	assert.NotContains(t, text, "/done")
+
+	// Should have a button for the missed instance
+	require.NotNil(t, mock.sent[0].ReplyMarkup)
+	keyboard, ok := mock.sent[0].ReplyMarkup.(*tgbotapi.InlineKeyboardMarkup)
+	require.True(t, ok)
+	found := false
+	for _, row := range keyboard.InlineKeyboard {
+		for _, btn := range row {
+			if btn.CallbackData != nil && *btn.CallbackData == "done_inst:"+inst1.ID+":11:00" {
+				found = true
+			}
+		}
+	}
+	assert.True(t, found, "expected done_inst button for missed instance")
+}
+
+// ---------------------------------------------------------------------------
+// Callback delete flow tests
+// ---------------------------------------------------------------------------
+
+func TestHandleCallbackDel_AsksConfirmation(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Delete me",
+		Times:  []string{"09:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	upd := updateWithCallback("del:"+r.ID, 12345, 12345, 100)
+	h.HandleUpdate(upd)
+
+	// Should answer callback with empty text
+	require.Len(t, mock.callbacks, 1)
+	assert.Empty(t, mock.callbacks[0].Text)
+
+	// Should have edited the message text to ask for confirmation
+	require.GreaterOrEqual(t, len(mock.edits), 1)
+	editText, ok := mock.edits[0].(tgbotapi.EditMessageTextConfig)
+	require.True(t, ok)
+	assert.Contains(t, editText.Text, "Удалить")
+	assert.Contains(t, editText.Text, "Delete me")
+
+	// Should have buttons Да/Нет
+	require.NotNil(t, editText.ReplyMarkup)
+	key := editText.ReplyMarkup
+	require.Len(t, key.InlineKeyboard, 1)
+	require.Len(t, key.InlineKeyboard[0], 2)
+	assert.NotNil(t, key.InlineKeyboard[0][0].CallbackData)
+	assert.NotNil(t, key.InlineKeyboard[0][1].CallbackData)
+	assert.Contains(t, *key.InlineKeyboard[0][0].CallbackData, "del_yes:")
+	assert.Contains(t, *key.InlineKeyboard[0][1].CallbackData, "del_no:")
+}
+
+func TestHandleCallbackDelYes_DeletesReminder(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Delete me",
+		Times:  []string{"09:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	// Create an instance
+	_, err = store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		ForDate:     time.Now(),
+		TimeIndex:   0,
+		ScheduledAt: time.Now(),
+		Status:      "pending",
+	})
+	require.NoError(t, err)
+
+	upd := updateWithCallback("del_yes:"+r.ID, 12345, 12345, 100)
+	h.HandleUpdate(upd)
+
+	// Should answer with "Удалено!"
+	require.Len(t, mock.callbacks, 1)
+	assert.Contains(t, mock.callbacks[0].Text, "🗑")
+
+	// Should have edited the message
+	require.GreaterOrEqual(t, len(mock.edits), 1)
+	editText, ok := mock.edits[0].(tgbotapi.EditMessageTextConfig)
+	require.True(t, ok)
+	assert.Contains(t, editText.Text, "удалено")
+
+	// Reminder should be gone
+	_, err = store.GetByID(db, r.ID)
+	assert.ErrorContains(t, err, "not found")
+
+	// Instances should be gone
+	insts, err := store.GetReminderInstancesByReminder(db, r.ID)
+	require.NoError(t, err)
+	assert.Empty(t, insts)
+}
+
+func TestHandleCallbackDelNo_CancelsDeletion(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Keep me",
+		Times:  []string{"09:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	upd := updateWithCallback("del_no:"+r.ID, 12345, 12345, 100)
+	h.HandleUpdate(upd)
+
+	// Should answer with empty text
+	require.Len(t, mock.callbacks, 1)
+	assert.Empty(t, mock.callbacks[0].Text)
+
+	// Should have edited the message to remove buttons
+	require.GreaterOrEqual(t, len(mock.edits), 1)
+	_, ok := mock.edits[0].(tgbotapi.EditMessageReplyMarkupConfig)
+	require.True(t, ok, "expected EditMessageReplyMarkupConfig")
+
+	// Reminder should still exist
+	_, err = store.GetByID(db, r.ID)
+	require.NoError(t, err)
+}
+
+// ---------------------------------------------------------------------------
+// Callback done_inst flow tests
+// ---------------------------------------------------------------------------
+
+func TestHandleCallbackDoneInst_AsksConfirmation(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Test",
+		Times:  []string{"09:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		ForDate:     time.Now(),
+		TimeIndex:   0,
+		ScheduledAt: time.Now().Add(-1 * time.Hour),
+		Status:      "pending",
+	})
+	require.NoError(t, err)
+
+	upd := updateWithCallback("done_inst:"+inst.ID+":09:00", 12345, 12345, 100)
+	h.HandleUpdate(upd)
+
+	// Should answer with empty text
+	require.Len(t, mock.callbacks, 1)
+	assert.Empty(t, mock.callbacks[0].Text)
+
+	// Should have edited the message with confirmation
+	require.GreaterOrEqual(t, len(mock.edits), 1)
+	editText, ok := mock.edits[0].(tgbotapi.EditMessageTextConfig)
+	require.True(t, ok)
+	assert.Contains(t, editText.Text, "Записать")
+	assert.Contains(t, editText.Text, "09:00")
+
+	// Should have Да/Нет buttons
+	require.NotNil(t, editText.ReplyMarkup)
+	key := editText.ReplyMarkup
+	require.Len(t, key.InlineKeyboard, 1)
+	require.Len(t, key.InlineKeyboard[0], 2)
+	require.NotNil(t, key.InlineKeyboard[0][0].CallbackData)
+	require.NotNil(t, key.InlineKeyboard[0][1].CallbackData)
+	assert.Contains(t, *key.InlineKeyboard[0][0].CallbackData, "done_inst_y:")
+	assert.Contains(t, *key.InlineKeyboard[0][1].CallbackData, "done_inst_n:")
+}
+
+func TestHandleCallbackDoneInstConfirm_MarksDone(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Done test",
+		Times:  []string{"09:00", "12:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	now := time.Now().Truncate(time.Second)
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		ForDate:     now,
+		TimeIndex:   0,
+		ScheduledAt: time.Date(now.Year(), now.Month(), now.Day(), 9, 0, 0, 0, time.UTC),
+		Status:      "pending",
+	})
+	require.NoError(t, err)
+
+	upd := updateWithCallback("done_inst_y:"+inst.ID+":09:00", 12345, 12345, 100)
+	h.HandleUpdate(upd)
+
+	// Should answer with "Выполнено в 09:00!"
+	require.Len(t, mock.callbacks, 1)
+	assert.Contains(t, mock.callbacks[0].Text, "✅")
+	assert.Contains(t, mock.callbacks[0].Text, "09:00")
+
+	// Should have sent confirmation message
+	require.GreaterOrEqual(t, len(mock.sent), 1)
+	assert.Contains(t, mock.sent[0].Text, "✅")
+	assert.Contains(t, mock.sent[0].Text, "Done test")
+
+	// Verify instance is done with correct time
+	got, err := store.GetInstanceByID(db, inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "done", got.Status)
+	require.NotNil(t, got.DoneAt)
+	assert.Equal(t, 9, got.DoneAt.In(time.UTC).Hour())
+	assert.Equal(t, 0, got.DoneAt.In(time.UTC).Minute())
+
+	// Next instance should be created
+	insts, err := store.GetReminderInstancesByReminder(db, r.ID)
+	require.NoError(t, err)
+	var pending []store.ReminderInstance
+	for _, i := range insts {
+		if i.Status == "pending" {
+			pending = append(pending, i)
+		}
+	}
+	require.Len(t, pending, 1)
+	assert.Equal(t, 1, pending[0].TimeIndex)
+}
+
+func TestHandleCallbackDoneInstCancel_RemovesButtons(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Cancel test",
+		Times:  []string{"09:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		ForDate:     time.Now(),
+		TimeIndex:   0,
+		ScheduledAt: time.Now().Add(-1 * time.Hour),
+		Status:      "pending",
+	})
+	require.NoError(t, err)
+
+	upd := updateWithCallback("done_inst_n:"+inst.ID+":09:00", 12345, 12345, 100)
+	h.HandleUpdate(upd)
+
+	// Should answer with empty text
+	require.Len(t, mock.callbacks, 1)
+	assert.Empty(t, mock.callbacks[0].Text)
+
+	// Should have edited message to remove buttons
+	require.GreaterOrEqual(t, len(mock.edits), 1)
+	_, ok := mock.edits[0].(tgbotapi.EditMessageReplyMarkupConfig)
+	require.True(t, ok, "expected EditMessageReplyMarkupConfig")
+
+	// Instance should still be pending
+	got, err := store.GetInstanceByID(db, inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "pending", got.Status)
 }

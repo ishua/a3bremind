@@ -18,29 +18,51 @@ func (h *Handler) handleCallback(update tgbotapi.Update) {
 		return
 	}
 
-	// Парсинг callback data: action:instanceID
-	data := strings.SplitN(callback.Data, ":", 2)
-	if len(data) != 2 {
+	// Парсинг callback data: action:id[:payload]
+	// - action: "done", "snooze", "skip", "instances", "del", "del_yes", "del_no"
+	//   "done_inst", "done_inst_y", "done_inst_n"
+	// - id: UUID (36 символов)
+	// - payload (опционально): HH:MM
+	data := strings.SplitN(callback.Data, ":", 3)
+	if len(data) < 2 {
 		h.answerCallback(callback, "Ошибка: неверный формат данных")
 		return
 	}
 
 	action := data[0]
-	instanceID := data[1]
+	id := data[1]
 
-	// Проверяем UUID — должен быть 36 символов
-	if len(instanceID) != 36 {
-		h.answerCallback(callback, "Ошибка: неверный UUID")
-		return
+	var payload string
+	if len(data) >= 3 {
+		payload = data[2]
+	}
+
+	// Для действий с instanceID — проверяем UUID для действий, где id это instanceID
+	switch action {
+	case "done", "snooze", "skip", "done_inst", "done_inst_y", "done_inst_n":
+		if len(id) != 36 {
+			h.answerCallback(callback, "Ошибка: неверный UUID")
+			return
+		}
 	}
 
 	switch action {
 	case "done":
-		h.handleCallbackDone(callback, instanceID)
+		h.handleCallbackDone(callback, id)
 	case "snooze":
-		h.handleCallbackSnooze(callback, instanceID)
+		h.handleCallbackSnooze(callback, id)
 	case "skip":
-		h.handleCallbackSkip(callback, instanceID)
+		h.handleCallbackSkip(callback, id)
+	case "instances":
+		h.handleCallbackInstances(callback, id)
+	case "del", "del_yes", "del_no":
+		h.handleCallbackDelete(callback, action, id)
+	case "done_inst":
+		h.handleCallbackDoneInst(callback, id, payload)
+	case "done_inst_y":
+		h.handleCallbackDoneInstConfirm(callback, id, payload)
+	case "done_inst_n":
+		h.handleCallbackDoneInstCancel(callback, id, payload)
 	default:
 		h.answerCallback(callback, "Неизвестное действие")
 	}
@@ -50,8 +72,8 @@ func (h *Handler) handleCallback(update tgbotapi.Update) {
 func (h *Handler) answerCallback(callback *tgbotapi.CallbackQuery, text string) {
 	cb := tgbotapi.NewCallback(callback.ID, text)
 	if _, err := h.bot.Request(cb); err != nil {
-		cb.Text = ""      // пустой ответ, если с текстом не вышло
-		h.bot.Request(cb) //nolint:errcheck // ответ без текста — fire-and-forget
+		cb.Text = ""
+		h.bot.Request(cb) //nolint:errcheck
 	}
 }
 
@@ -72,6 +94,19 @@ func (h *Handler) editMessageText(chatID int64, messageID int, text string) {
 	}
 }
 
+// editMessageWithKeyboard заменяет текст и устанавливает новую клавиатуру.
+func (h *Handler) editMessageWithKeyboard(chatID int64, messageID int, text string, keyboard tgbotapi.InlineKeyboardMarkup) {
+	edit := tgbotapi.NewEditMessageText(chatID, messageID, text)
+	edit.ReplyMarkup = &keyboard
+	if _, err := h.bot.Request(edit); err != nil {
+		slog.Error("edit message with keyboard", "chat_id", chatID, "message_id", messageID, "error", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Callback: Done (из уведомления)
+// ---------------------------------------------------------------------------
+
 // handleCallbackDone обрабатывает нажатие ✅ Done.
 func (h *Handler) handleCallbackDone(callback *tgbotapi.CallbackQuery, instanceID string) {
 	userID := callback.From.ID
@@ -85,7 +120,6 @@ func (h *Handler) handleCallbackDone(callback *tgbotapi.CallbackQuery, instanceI
 		return
 	}
 
-	// Проверяем владельца
 	reminder, err := store.GetByID(h.db, instance.ReminderID)
 	if err != nil {
 		h.answerCallback(callback, "Напоминание не найдено")
@@ -105,13 +139,12 @@ func (h *Handler) handleCallbackDone(callback *tgbotapi.CallbackQuery, instanceI
 		return
 	}
 
-	// Выполняем done
 	tx, err := h.db.Begin()
 	if err != nil {
 		h.answerCallback(callback, "Произошла ошибка")
 		return
 	}
-	defer tx.Rollback() //nolint:errcheck // deferred rollback is idiomatic
+	defer tx.Rollback() //nolint:errcheck
 
 	if err := store.SetStatus(tx, instance.ID, "done"); err != nil {
 		h.answerCallback(callback, "Произошла ошибка")
@@ -135,7 +168,6 @@ func (h *Handler) handleCallbackDone(callback *tgbotapi.CallbackQuery, instanceI
 		return
 	}
 
-	// Форматируем время
 	loc, _ := time.LoadLocation(user.Timezone)
 	doneTime := "??:??"
 	if updated.DoneAt != nil {
@@ -159,8 +191,11 @@ func (h *Handler) handleCallbackDone(callback *tgbotapi.CallbackQuery, instanceI
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Callback: Snooze
+// ---------------------------------------------------------------------------
+
 // handleCallbackSnooze обрабатывает нажатие ⏰ Snooze.
-// Откладывает на дефолтный интервал (RepeatInterval = 15 минут).
 func (h *Handler) handleCallbackSnooze(callback *tgbotapi.CallbackQuery, instanceID string) {
 	userID := callback.From.ID
 	chatID := callback.Message.Chat.ID
@@ -192,7 +227,6 @@ func (h *Handler) handleCallbackSnooze(callback *tgbotapi.CallbackQuery, instanc
 		return
 	}
 
-	// Сдвигаем scheduled_at на RepeatInterval (15 минут)
 	newTime := time.Now().Add(domain.RepeatInterval)
 	if err := store.SetInstanceScheduledAt(h.db, instance.ID, newTime); err != nil {
 		h.answerCallback(callback, "Произошла ошибка")
@@ -204,6 +238,10 @@ func (h *Handler) handleCallbackSnooze(callback *tgbotapi.CallbackQuery, instanc
 	h.editMessageText(chatID, messageID, text)
 	h.answerCallback(callback, fmt.Sprintf("⏰ Напомню через %d мин.", minutes))
 }
+
+// ---------------------------------------------------------------------------
+// Callback: Skip
+// ---------------------------------------------------------------------------
 
 // handleCallbackSkip обрабатывает нажатие ⏭ Skip.
 func (h *Handler) handleCallbackSkip(callback *tgbotapi.CallbackQuery, instanceID string) {
@@ -237,13 +275,12 @@ func (h *Handler) handleCallbackSkip(callback *tgbotapi.CallbackQuery, instanceI
 		return
 	}
 
-	// Транзакция: set status skipped + next instance
 	tx, err := h.db.Begin()
 	if err != nil {
 		h.answerCallback(callback, "Произошла ошибка")
 		return
 	}
-	defer tx.Rollback() //nolint:errcheck // deferred rollback is idiomatic
+	defer tx.Rollback() //nolint:errcheck
 
 	if err := store.SetStatus(tx, instance.ID, "skipped"); err != nil {
 		h.answerCallback(callback, "Произошла ошибка")
@@ -270,4 +307,323 @@ func (h *Handler) handleCallbackSkip(callback *tgbotapi.CallbackQuery, instanceI
 	text := fmt.Sprintf("⏭️ %s — пропущено", reminder.Label)
 	h.editMessageText(chatID, messageID, text)
 	h.answerCallback(callback, "⏭ Пропущено")
+}
+
+// ---------------------------------------------------------------------------
+// Callback: Instances — показать список инстансов для напоминания
+// ---------------------------------------------------------------------------
+
+// handleCallbackInstances отправляет новое сообщение со списком инстансов.
+func (h *Handler) handleCallbackInstances(callback *tgbotapi.CallbackQuery, reminderID string) {
+	userID := callback.From.ID
+	chatID := callback.Message.Chat.ID
+
+	user, err := store.GetByTelegramID(h.db, userID)
+	if err != nil {
+		h.answerCallback(callback, "Пользователь не найден")
+		return
+	}
+
+	if user.Timezone == "" {
+		h.answerCallback(callback, "Сначала укажи часовой пояс")
+		return
+	}
+
+	loc, err := time.LoadLocation(user.Timezone)
+	if err != nil {
+		h.answerCallback(callback, "Ошибка часового пояса")
+		return
+	}
+
+	reminder, err := store.GetByID(h.db, reminderID)
+	if err != nil || reminder.UserID != user.ID {
+		h.answerCallback(callback, "Напоминание не найдено")
+		return
+	}
+
+	instances, err := store.GetReminderInstancesByReminder(h.db, reminderID)
+	if err != nil {
+		h.answerCallback(callback, "Произошла ошибка")
+		return
+	}
+
+	if len(instances) == 0 {
+		h.answerCallback(callback, "Нет записей для этого напоминания")
+		return
+	}
+
+	now := time.Now().In(loc)
+	year, month, day := now.Date()
+	startOfToday := time.Date(year, month, day, 0, 0, 0, 0, loc)
+	endOfToday := startOfToday.Add(24 * time.Hour)
+
+	var todayInstances []store.ReminderInstance
+	for _, inst := range instances {
+		if (inst.ForDate.Equal(startOfToday) || inst.ForDate.After(startOfToday)) && inst.ForDate.Before(endOfToday) {
+			todayInstances = append(todayInstances, inst)
+		}
+	}
+
+	if len(todayInstances) == 0 {
+		h.answerCallback(callback, "Нет записей на сегодня")
+		return
+	}
+
+	h.answerCallback(callback, "")
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "💊 %s\n", reminder.Label)
+
+	var buttons []tgbotapi.InlineKeyboardButton
+	for _, inst := range todayInstances {
+		scheduledStr := inst.ScheduledAt.In(loc).Format("15:04")
+
+		switch inst.Status {
+		case "done":
+			fmt.Fprintf(&sb, "✅ %s\n", scheduledStr)
+		case "missed":
+			shortID := inst.ID
+			if len(shortID) > 8 {
+				shortID = shortID[:8]
+			}
+			fmt.Fprintf(&sb, "❌ %s — %s…\n", scheduledStr, shortID)
+			buttons = append(buttons, tgbotapi.NewInlineKeyboardButtonData(
+				fmt.Sprintf("✅ %s", scheduledStr),
+				fmt.Sprintf("done_inst:%s:%s", inst.ID, scheduledStr),
+			))
+		default:
+			shortID := inst.ID
+			if len(shortID) > 8 {
+				shortID = shortID[:8]
+			}
+			fmt.Fprintf(&sb, "⏳ %s — %s…\n", scheduledStr, shortID)
+			buttons = append(buttons, tgbotapi.NewInlineKeyboardButtonData(
+				fmt.Sprintf("✅ %s", scheduledStr),
+				fmt.Sprintf("done_inst:%s:%s", inst.ID, scheduledStr),
+			))
+		}
+	}
+
+	var keyboard tgbotapi.InlineKeyboardMarkup
+	if len(buttons) > 0 {
+		var rows [][]tgbotapi.InlineKeyboardButton
+		// По 2 кнопки в ряд
+		for i := 0; i < len(buttons); i += 2 {
+			end := i + 2
+			if end > len(buttons) {
+				end = len(buttons)
+			}
+			rows = append(rows, buttons[i:end])
+		}
+		keyboard = tgbotapi.NewInlineKeyboardMarkup(rows...)
+	}
+
+	msg := tgbotapi.NewMessage(chatID, strings.TrimSpace(sb.String()))
+	if len(buttons) > 0 {
+		msg.ReplyMarkup = &keyboard
+	}
+	if _, err := h.bot.Send(msg); err != nil {
+		slog.Error("send instances message", "error", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Callback: Delete flow (del → del_yes / del_no)
+// ---------------------------------------------------------------------------
+
+// handleCallbackDelete обрабатывает del, del_yes, del_no.
+func (h *Handler) handleCallbackDelete(callback *tgbotapi.CallbackQuery, action string, reminderID string) {
+	userID := callback.From.ID
+	chatID := callback.Message.Chat.ID
+	messageID := callback.Message.MessageID
+
+	user, err := store.GetByTelegramID(h.db, userID)
+	if err != nil {
+		h.answerCallback(callback, "Пользователь не найден")
+		return
+	}
+
+	reminder, err := store.GetByID(h.db, reminderID)
+	if err != nil || reminder.UserID != user.ID {
+		h.answerCallback(callback, "Напоминание не найдено")
+		return
+	}
+
+	switch action {
+	case "del":
+		// Спрашиваем подтверждение
+		h.answerCallback(callback, "")
+		h.editMessageWithKeyboard(chatID, messageID,
+			fmt.Sprintf("Удалить «%s»?", reminder.Label),
+			tgbotapi.NewInlineKeyboardMarkup(
+				tgbotapi.NewInlineKeyboardRow(
+					tgbotapi.NewInlineKeyboardButtonData("✅ Да", "del_yes:"+reminderID),
+					tgbotapi.NewInlineKeyboardButtonData("❌ Нет", "del_no:"+reminderID),
+				),
+			),
+		)
+
+	case "del_yes":
+		// Удаляем
+		if err := store.DeleteReminderInstances(h.db, reminderID); err != nil {
+			h.answerCallback(callback, "Произошла ошибка")
+			return
+		}
+		if err := store.Delete(h.db, reminderID); err != nil {
+			h.answerCallback(callback, "Произошла ошибка")
+			return
+		}
+		h.editMessageText(chatID, messageID, fmt.Sprintf("🗑 Напоминание «%s» удалено", reminder.Label))
+		h.answerCallback(callback, "🗑 Удалено!")
+
+	case "del_no":
+		// Отменяем — возвращаем исходные кнопки
+		h.answerCallback(callback, "")
+		h.editMessageButtons(chatID, messageID)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Callback: Done from instances list (done_inst → done_inst_y / done_inst_n)
+// ---------------------------------------------------------------------------
+
+// handleCallbackDoneInst обрабатывает нажатие ✅ HH:MM в списке инстансов.
+// Показывает подтверждение с временем.
+func (h *Handler) handleCallbackDoneInst(callback *tgbotapi.CallbackQuery, instanceID string, timeStr string) {
+	chatID := callback.Message.Chat.ID
+	messageID := callback.Message.MessageID
+
+	h.answerCallback(callback, "")
+
+	instance, err := store.GetInstanceByID(h.db, instanceID)
+	if err != nil {
+		h.editMessageText(chatID, messageID, "Напоминание не найдено")
+		return
+	}
+
+	reminder, err := store.GetByID(h.db, instance.ReminderID)
+	if err != nil {
+		h.editMessageText(chatID, messageID, "Напоминание не найдено")
+		return
+	}
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("✅ Да", fmt.Sprintf("done_inst_y:%s:%s", instanceID, timeStr)),
+			tgbotapi.NewInlineKeyboardButtonData("❌ Нет", fmt.Sprintf("done_inst_n:%s:%s", instanceID, timeStr)),
+		),
+	)
+
+	h.editMessageWithKeyboard(chatID, messageID,
+		fmt.Sprintf("Записать выполнение «%s» в %s?", reminder.Label, timeStr),
+		keyboard,
+	)
+}
+
+// handleCallbackDoneInstConfirm подтверждает done инстанса с указанным временем.
+func (h *Handler) handleCallbackDoneInstConfirm(callback *tgbotapi.CallbackQuery, instanceID string, timeStr string) {
+	userID := callback.From.ID
+	chatID := callback.Message.Chat.ID
+
+	user, err := store.GetByTelegramID(h.db, userID)
+	if err != nil {
+		h.answerCallback(callback, "Пользователь не найден")
+		return
+	}
+
+	if user.Timezone == "" {
+		h.answerCallback(callback, "Сначала укажи часовой пояс")
+		return
+	}
+
+	loc, err := time.LoadLocation(user.Timezone)
+	if err != nil {
+		h.answerCallback(callback, "Ошибка часового пояса")
+		return
+	}
+
+	instance, err := store.GetInstanceByID(h.db, instanceID)
+	if err != nil {
+		h.answerCallback(callback, "Напоминание не найдено")
+		return
+	}
+
+	reminder, err := store.GetByID(h.db, instance.ReminderID)
+	if err != nil || reminder.UserID != user.ID {
+		h.answerCallback(callback, "Напоминание не найдено")
+		return
+	}
+
+	// Парсим время
+	parsed, err := time.ParseInLocation("15:04", timeStr, loc)
+	if err != nil {
+		h.answerCallback(callback, "Неверный формат времени")
+		return
+	}
+	now := time.Now().In(loc)
+	doneAt := time.Date(now.Year(), now.Month(), now.Day(), parsed.Hour(), parsed.Minute(), 0, 0, loc)
+
+	if instance.Status != "pending" && instance.Status != "missed" {
+		h.answerCallback(callback, "Уже выполнено")
+		return
+	}
+
+	tx, err := h.db.Begin()
+	if err != nil {
+		h.answerCallback(callback, "Произошла ошибка")
+		return
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// Удаляем все Instance с time_index > current
+	if err := store.DeleteInstancesAfterIndex(tx, instance.ReminderID, instance.TimeIndex); err != nil {
+		h.answerCallback(callback, "Произошла ошибка")
+		return
+	}
+
+	// Устанавливаем статус done с указанным временем
+	if err := store.SetStatusWithDoneAt(tx, instanceID, "done", doneAt); err != nil {
+		h.answerCallback(callback, "Произошла ошибка")
+		return
+	}
+
+	updated, err := store.GetInstanceByID(tx, instanceID)
+	if err != nil {
+		h.answerCallback(callback, "Произошла ошибка")
+		return
+	}
+
+	warning, err := domain.NextInstance(tx, updated, time.Now())
+	if err != nil {
+		h.answerCallback(callback, "Произошла ошибка")
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		h.answerCallback(callback, "Произошла ошибка")
+		return
+	}
+
+	doneTimeStr := doneAt.Format("15:04")
+	h.answerCallback(callback, fmt.Sprintf("✅ Выполнено в %s!", doneTimeStr))
+
+	// Отправляем новое сообщение с подтверждением
+	h.sendText(chatID, fmt.Sprintf("✅ %s — записано в %s", reminder.Label, doneTimeStr))
+
+	if warning != "" {
+		h.sendText(chatID, fmt.Sprintf("⚠️ %s — пропустить?", warning))
+	}
+
+	if reminder.MinGap != nil && updated.DoneAt != nil {
+		h.sendRescheduleNotification(chatID, user, reminder, updated)
+	}
+}
+
+// handleCallbackDoneInstCancel отменяет done инстанса, убирает кнопки.
+func (h *Handler) handleCallbackDoneInstCancel(callback *tgbotapi.CallbackQuery, instanceID string, timeStr string) {
+	chatID := callback.Message.Chat.ID
+	messageID := callback.Message.MessageID
+
+	h.answerCallback(callback, "")
+	h.editMessageButtons(chatID, messageID)
 }

@@ -2,6 +2,7 @@ package bot
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -10,8 +11,7 @@ import (
 )
 
 // handleListInstances обрабатывает /list instances <reminder_id>.
-// Показывает все Instance указанного Reminder за сегодня с UUID, статусом,
-// временем и готовой командой /done <uuid> <time>.
+// Показывает все Instance указанного Reminder за сегодня с инлайн-кнопками.
 func (h *Handler) handleListInstances(update tgbotapi.Update) {
 	user, err := store.GetOrCreate(h.db, update.Message.Chat.ID)
 	if err != nil {
@@ -19,7 +19,6 @@ func (h *Handler) handleListInstances(update tgbotapi.Update) {
 		return
 	}
 
-	// Парсим reminder_id из аргументов
 	text := strings.TrimSpace(update.Message.Text)
 	parts := strings.Fields(text)
 	if len(parts) < 3 {
@@ -39,14 +38,12 @@ func (h *Handler) handleListInstances(update tgbotapi.Update) {
 		return
 	}
 
-	// Загружаем Reminder с проверкой принадлежности пользователю
 	reminder, err := store.GetByID(h.db, reminderID)
 	if err != nil || reminder.UserID != user.ID {
 		h.sendText(update.Message.Chat.ID, "Напоминание не найдено")
 		return
 	}
 
-	// Загружаем все Instance для этого Reminder
 	instances, err := store.GetReminderInstancesByReminder(h.db, reminderID)
 	if err != nil {
 		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
@@ -58,7 +55,6 @@ func (h *Handler) handleListInstances(update tgbotapi.Update) {
 		return
 	}
 
-	// Фильтруем по сегодняшнему дню в timezone пользователя
 	now := time.Now().In(loc)
 	year, month, day := now.Date()
 	startOfToday := time.Date(year, month, day, 0, 0, 0, 0, loc)
@@ -76,10 +72,10 @@ func (h *Handler) handleListInstances(update tgbotapi.Update) {
 		return
 	}
 
-	// Форматируем вывод
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "💊 %s\n", reminder.Label)
 
+	var buttons []tgbotapi.InlineKeyboardButton
 	for _, inst := range todayInstances {
 		scheduledStr := inst.ScheduledAt.In(loc).Format("15:04")
 
@@ -87,24 +83,41 @@ func (h *Handler) handleListInstances(update tgbotapi.Update) {
 		case "done":
 			fmt.Fprintf(&sb, "✅ %s\n", scheduledStr)
 		case "missed":
-			// Показываем короткий UUID
 			shortID := inst.ID
 			if len(shortID) > 8 {
 				shortID = shortID[:8]
 			}
 			fmt.Fprintf(&sb, "❌ %s — %s…\n", scheduledStr, shortID)
+			buttons = append(buttons, tgbotapi.NewInlineKeyboardButtonData(
+				fmt.Sprintf("✅ %s", scheduledStr),
+				fmt.Sprintf("done_inst:%s:%s", inst.ID, scheduledStr),
+			))
 		default:
-			// pending, skipped и т.д.
 			shortID := inst.ID
 			if len(shortID) > 8 {
 				shortID = shortID[:8]
 			}
 			fmt.Fprintf(&sb, "⏳ %s — %s…\n", scheduledStr, shortID)
+			buttons = append(buttons, tgbotapi.NewInlineKeyboardButtonData(
+				fmt.Sprintf("✅ %s", scheduledStr),
+				fmt.Sprintf("done_inst:%s:%s", inst.ID, scheduledStr),
+			))
 		}
-
-		// Готовая команда /done
-		fmt.Fprintf(&sb, "  `/done %s %s`\n", inst.ID, scheduledStr)
 	}
 
-	h.sendMarkdown(update.Message.Chat.ID, strings.TrimSpace(sb.String()))
+	msg := tgbotapi.NewMessage(update.Message.Chat.ID, strings.TrimSpace(sb.String()))
+	if len(buttons) > 0 {
+		var rows [][]tgbotapi.InlineKeyboardButton
+		for i := 0; i < len(buttons); i += 2 {
+			end := i + 2
+			if end > len(buttons) {
+				end = len(buttons)
+			}
+			rows = append(rows, buttons[i:end])
+		}
+		msg.ReplyMarkup = &tgbotapi.InlineKeyboardMarkup{InlineKeyboard: rows}
+	}
+	if _, err := h.bot.Send(msg); err != nil {
+		slog.Error("send list instances", "error", err)
+	}
 }
