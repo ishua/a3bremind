@@ -173,9 +173,10 @@ func (h *Handler) handleCallbackDone(callback *tgbotapi.CallbackQuery, instanceI
 		}
 	}
 
+	h.answerCallback(callback, "✅ Выполнено!")
+	h.editMessageButtons(chatID, messageID)
 	text := fmt.Sprintf("✅ %s — записано в %s", reminder.Label, doneTime)
 	h.editMessageText(chatID, messageID, text)
-	h.answerCallback(callback, "✅ Выполнено!")
 
 	if warning != "" {
 		h.sendText(chatID, fmt.Sprintf("⚠️ %s — пропустить?", warning))

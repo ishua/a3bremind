@@ -2026,9 +2026,13 @@ func TestHandleCallbackDone_Success(t *testing.T) {
 	require.Len(t, mock.callbacks, 1)
 	assert.Contains(t, mock.callbacks[0].Text, "✅")
 
-	// Should have edited the message text
-	require.GreaterOrEqual(t, len(mock.edits), 1)
-	editText, ok := mock.edits[0].(tgbotapi.EditMessageTextConfig)
+	// Should have edited the message — first remove buttons, then update text
+	require.GreaterOrEqual(t, len(mock.edits), 2)
+	replyMarkup, ok := mock.edits[0].(tgbotapi.EditMessageReplyMarkupConfig)
+	require.True(t, ok, "expected EditMessageReplyMarkupConfig")
+	assert.Empty(t, replyMarkup.ReplyMarkup.InlineKeyboard)
+
+	editText, ok := mock.edits[1].(tgbotapi.EditMessageTextConfig)
 	require.True(t, ok, "expected EditMessageTextConfig")
 	assert.Contains(t, editText.Text, "✅")
 	assert.Contains(t, editText.Text, "Callback done")
