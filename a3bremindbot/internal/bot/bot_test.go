@@ -490,6 +490,7 @@ func TestHandleAdd_SeriesWithGap(t *testing.T) {
 // done/ok/+ tests
 // ---------------------------------------------------------------------------
 
+//nolint:dupl // similar to TestHandleDone_Reply_MissedToDone but tests pending→done
 func TestHandleDone_Reply(t *testing.T) {
 	db, mock, h := setup(t)
 
@@ -962,7 +963,7 @@ func TestHandleListInstances_ShowsInstances(t *testing.T) {
 	// Should have inline buttons instead of /done text commands
 	assert.NotContains(t, text, "/done")
 
-	// Check inline keyboard — 2 buttons for missed+pending
+	// Check inline keyboard — 4 buttons for missed+pending (2 per instance: Now + Set)
 	msg := mock.LastSentMsg()
 	require.NotNil(t, msg.ReplyMarkup)
 	keyboard, ok := msg.ReplyMarkup.(*tgbotapi.InlineKeyboardMarkup)
@@ -977,10 +978,17 @@ func TestHandleListInstances_ShowsInstances(t *testing.T) {
 			}
 		}
 	}
-	require.Len(t, callbackData, 2) // missed + pending, done has no button
+	require.Len(t, callbackData, 4) // missed (now+set) + pending (now+set), done has no button
 	// inst1 is missed at 11:00, inst2 is pending at 15:00
-	assert.Contains(t, callbackData, "done_inst:"+inst1.ID+":11:00")
-	assert.Contains(t, callbackData, "done_inst:"+inst2.ID+":15:00")
+	expectedCallbacks := []string{
+		"done_now:" + inst1.ID,
+		"done_custom:" + inst1.ID,
+		"done_now:" + inst2.ID,
+		"done_custom:" + inst2.ID,
+	}
+	for _, ec := range expectedCallbacks {
+		assert.Contains(t, callbackData, ec)
+	}
 }
 
 func TestHandleListInstances_WrongUser(t *testing.T) {
@@ -2304,19 +2312,25 @@ func TestHandleCallbackInstances_Success(t *testing.T) {
 	assert.Contains(t, text, "❌ 11:00")
 	assert.NotContains(t, text, "/done")
 
-	// Should have a button for the missed instance
+	// Should have a buttons for the missed instance (Now + Set)
 	require.NotNil(t, mock.sent[0].ReplyMarkup)
 	keyboard, ok := mock.sent[0].ReplyMarkup.(*tgbotapi.InlineKeyboardMarkup)
 	require.True(t, ok)
-	found := false
+	var foundNow, foundSet bool
 	for _, row := range keyboard.InlineKeyboard {
 		for _, btn := range row {
-			if btn.CallbackData != nil && *btn.CallbackData == "done_inst:"+inst1.ID+":11:00" {
-				found = true
+			if btn.CallbackData != nil {
+				if *btn.CallbackData == "done_now:"+inst1.ID {
+					foundNow = true
+				}
+				if *btn.CallbackData == "done_custom:"+inst1.ID {
+					foundSet = true
+				}
 			}
 		}
 	}
-	assert.True(t, found, "expected done_inst button for missed instance")
+	assert.True(t, foundNow, "expected done_now button for missed instance")
+	assert.True(t, foundSet, "expected done_custom button for missed instance")
 }
 
 // ---------------------------------------------------------------------------
@@ -2447,10 +2461,11 @@ func TestHandleCallbackDelNo_CancelsDeletion(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Callback done_inst flow tests
+// Callback done_now tests (Phase 3: new instance list buttons)
 // ---------------------------------------------------------------------------
 
-func TestHandleCallbackDoneInst_AsksConfirmation(t *testing.T) {
+//nolint:dupl // similar to TestHandleCallbackDoneNow_MissedToDone but tests pending→done
+func TestHandleCallbackDoneNow_Pending(t *testing.T) {
 	db, mock, h := setup(t)
 
 	user, err := store.GetOrCreate(db, 12345)
@@ -2460,7 +2475,7 @@ func TestHandleCallbackDoneInst_AsksConfirmation(t *testing.T) {
 
 	r, err := store.Create(db, store.Reminder{
 		UserID: user.ID,
-		Label:  "Test",
+		Label:  "Done now",
 		Times:  []string{"09:00"},
 		Repeat: "daily",
 	})
@@ -2475,92 +2490,26 @@ func TestHandleCallbackDoneInst_AsksConfirmation(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	upd := updateWithCallback("done_inst:"+inst.ID+":09:00", 12345, 12345, 100)
+	upd := updateWithCallback("done_now:"+inst.ID, 12345, 12345, 100)
 	h.HandleUpdate(upd)
 
-	// Should answer with empty text
-	require.Len(t, mock.callbacks, 1)
-	assert.Empty(t, mock.callbacks[0].Text)
-
-	// Should have edited the message with confirmation
-	require.GreaterOrEqual(t, len(mock.edits), 1)
-	editText, ok := mock.edits[0].(tgbotapi.EditMessageTextConfig)
-	require.True(t, ok)
-	assert.Contains(t, editText.Text, "Записать")
-	assert.Contains(t, editText.Text, "09:00")
-
-	// Should have Да/Нет buttons
-	require.NotNil(t, editText.ReplyMarkup)
-	key := editText.ReplyMarkup
-	require.Len(t, key.InlineKeyboard, 1)
-	require.Len(t, key.InlineKeyboard[0], 2)
-	require.NotNil(t, key.InlineKeyboard[0][0].CallbackData)
-	require.NotNil(t, key.InlineKeyboard[0][1].CallbackData)
-	assert.Contains(t, *key.InlineKeyboard[0][0].CallbackData, "done_inst_y:")
-	assert.Contains(t, *key.InlineKeyboard[0][1].CallbackData, "done_inst_n:")
-}
-
-func TestHandleCallbackDoneInstConfirm_MarksDone(t *testing.T) {
-	db, mock, h := setup(t)
-
-	user, err := store.GetOrCreate(db, 12345)
-	require.NoError(t, err)
-	err = store.SetTimezone(db, user.ID, "UTC")
-	require.NoError(t, err)
-
-	r, err := store.Create(db, store.Reminder{
-		UserID: user.ID,
-		Label:  "Done test",
-		Times:  []string{"09:00", "12:00"},
-		Repeat: "daily",
-	})
-	require.NoError(t, err)
-
-	now := time.Now().Truncate(time.Second)
-	inst, err := store.CreateInstance(db, store.ReminderInstance{
-		ReminderID:  r.ID,
-		ForDate:     now,
-		TimeIndex:   0,
-		ScheduledAt: time.Date(now.Year(), now.Month(), now.Day(), 9, 0, 0, 0, time.UTC),
-		Status:      "pending",
-	})
-	require.NoError(t, err)
-
-	upd := updateWithCallback("done_inst_y:"+inst.ID+":09:00", 12345, 12345, 100)
-	h.HandleUpdate(upd)
-
-	// Should answer with "Выполнено в 09:00!"
+	// Should answer with ✅
 	require.Len(t, mock.callbacks, 1)
 	assert.Contains(t, mock.callbacks[0].Text, "✅")
-	assert.Contains(t, mock.callbacks[0].Text, "09:00")
 
-	// Should have sent confirmation message
+	// Should have sent confirmation
 	require.GreaterOrEqual(t, len(mock.sent), 1)
 	assert.Contains(t, mock.sent[0].Text, "✅")
-	assert.Contains(t, mock.sent[0].Text, "Done test")
 
-	// Verify instance is done with correct time
+	// Verify instance is done
 	got, err := store.GetInstanceByID(db, inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "done", got.Status)
 	require.NotNil(t, got.DoneAt)
-	assert.Equal(t, 9, got.DoneAt.In(time.UTC).Hour())
-	assert.Equal(t, 0, got.DoneAt.In(time.UTC).Minute())
-
-	// Next instance should be created
-	insts, err := store.GetReminderInstancesByReminder(db, r.ID)
-	require.NoError(t, err)
-	var pending []store.ReminderInstance
-	for _, i := range insts {
-		if i.Status == "pending" {
-			pending = append(pending, i)
-		}
-	}
-	require.Len(t, pending, 1)
-	assert.Equal(t, 1, pending[0].TimeIndex)
 }
 
-func TestHandleCallbackDoneInstCancel_RemovesButtons(t *testing.T) {
+//nolint:dupl // similar to TestHandleCallbackDoneNow_Pending but tests missed→done
+func TestHandleCallbackDoneNow_MissedToDone(t *testing.T) {
 	db, mock, h := setup(t)
 
 	user, err := store.GetOrCreate(db, 12345)
@@ -2570,7 +2519,271 @@ func TestHandleCallbackDoneInstCancel_RemovesButtons(t *testing.T) {
 
 	r, err := store.Create(db, store.Reminder{
 		UserID: user.ID,
-		Label:  "Cancel test",
+		Label:  "Done now missed",
+		Times:  []string{"09:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		ForDate:     time.Now(),
+		TimeIndex:   0,
+		ScheduledAt: time.Now().Add(-3 * time.Hour),
+		Status:      "missed",
+	})
+	require.NoError(t, err)
+
+	upd := updateWithCallback("done_now:"+inst.ID, 12345, 12345, 100)
+	h.HandleUpdate(upd)
+
+	// Should answer with ✅
+	require.Len(t, mock.callbacks, 1)
+	assert.Contains(t, mock.callbacks[0].Text, "✅")
+
+	// Verify instance is done
+	got, err := store.GetInstanceByID(db, inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "done", got.Status)
+	require.NotNil(t, got.DoneAt)
+}
+
+//nolint:dupl // similar to TestHandleCallbackDoneTime_Input_CompletesDone but from instance list
+func TestHandleCallbackDoneCustom_Pending(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Custom time",
+		Times:  []string{"09:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		ForDate:     time.Now(),
+		TimeIndex:   0,
+		ScheduledAt: time.Now().Add(-2 * time.Hour),
+		Status:      "pending",
+	})
+	require.NoError(t, err)
+
+	// Step 1: Click "Set" button
+	cbUpd := updateWithCallback("done_custom:"+inst.ID, 12345, 12345, 100)
+	h.HandleUpdate(cbUpd)
+
+	// Step 2: Send time text
+	textUpd := tgbotapi.Update{
+		Message: &tgbotapi.Message{
+			Text: "07:00",
+			Chat: &tgbotapi.Chat{ID: 12345},
+			From: &tgbotapi.User{ID: 12345},
+		},
+	}
+	mock.sent = nil
+	mock.callbacks = nil
+	h.HandleUpdate(textUpd)
+
+	// Should have sent ✅ confirmation
+	require.GreaterOrEqual(t, len(mock.sent), 1)
+	text := mock.sent[0].Text
+	assert.Contains(t, text, "✅")
+	assert.Contains(t, text, "Custom time")
+	assert.Contains(t, text, "07:00")
+
+	// Verify instance is done with done_at = 07:00
+	got, err := store.GetInstanceByID(db, inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "done", got.Status)
+	require.NotNil(t, got.DoneAt)
+	assert.Equal(t, 7, got.DoneAt.In(time.UTC).Hour())
+	assert.Equal(t, 0, got.DoneAt.In(time.UTC).Minute())
+}
+
+// ---------------------------------------------------------------------------
+// Missed → done tests (Phase 1: allow done for missed instances)
+// ---------------------------------------------------------------------------
+
+//nolint:dupl // similar to TestHandleCallbackDoneCustom_Pending but tests done→missed callback
+//nolint:dupl // similar to TestHandleCallbackDoneNow_Pending but tests done→missed callback
+func TestHandleCallbackDone_MissedToDone(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Missed done",
+		Times:  []string{"09:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		ForDate:     time.Now(),
+		TimeIndex:   0,
+		ScheduledAt: time.Now().Add(-2 * time.Hour),
+		Status:      "missed",
+	})
+	require.NoError(t, err)
+
+	upd := updateWithCallback("done:"+inst.ID, 12345, 12345, 100)
+	h.HandleUpdate(upd)
+
+	// Should answer with ✅
+	require.Len(t, mock.callbacks, 1)
+	assert.Contains(t, mock.callbacks[0].Text, "✅")
+
+	// Verify instance is now done
+	got, err := store.GetInstanceByID(db, inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "done", got.Status)
+	require.NotNil(t, got.DoneAt)
+}
+
+//nolint:dupl // similar to TestHandleDone_Reply but tests missed→done scenario
+func TestHandleDone_Reply_MissedToDone(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Missed reply",
+		Times:  []string{"09:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		ForDate:     time.Now(),
+		TimeIndex:   0,
+		ScheduledAt: time.Now().Add(-2 * time.Hour),
+		Status:      "missed",
+	})
+	require.NoError(t, err)
+
+	err = store.AddMessageID(db, inst.ID, 100, time.Now())
+	require.NoError(t, err)
+
+	err = store.InsertInstanceReply(db, 100, inst.ID)
+	require.NoError(t, err)
+
+	upd := tgbotapi.Update{
+		Message: &tgbotapi.Message{
+			Text: "done",
+			Chat: &tgbotapi.Chat{ID: 12345},
+			From: &tgbotapi.User{ID: 12345},
+			ReplyToMessage: &tgbotapi.Message{
+				MessageID: 100,
+			},
+		},
+	}
+
+	h.HandleUpdate(upd)
+
+	text := mock.LastText()
+	assert.Contains(t, text, "✅")
+	assert.Contains(t, text, "Missed reply")
+
+	// Verify instance is now done
+	got, err := store.GetInstanceByID(db, inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "done", got.Status)
+	require.NotNil(t, got.DoneAt)
+}
+
+func TestHandleDone_WithTimeConfirm_MissedToDone(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Missed with time",
+		Times:  []string{"09:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		ForDate:     time.Now(),
+		TimeIndex:   0,
+		ScheduledAt: time.Now().Add(-3 * time.Hour),
+		Status:      "missed",
+	})
+	require.NoError(t, err)
+
+	err = store.AddMessageID(db, inst.ID, 100, time.Now())
+	require.NoError(t, err)
+
+	err = store.InsertInstanceReply(db, 100, inst.ID)
+	require.NoError(t, err)
+
+	// First: done HH:MM with reply to set up pending confirm
+	upd1 := tgbotapi.Update{
+		Message: &tgbotapi.Message{
+			Text: "done 06:30",
+			Chat: &tgbotapi.Chat{ID: 12345},
+			From: &tgbotapi.User{ID: 12345},
+			ReplyToMessage: &tgbotapi.Message{
+				MessageID: 100,
+			},
+		},
+	}
+	h.HandleUpdate(upd1)
+
+	// Now: confirm with "+"
+	upd2 := updateWithText("+")
+	h.HandleUpdate(upd2)
+
+	text := mock.LastText()
+	assert.Contains(t, text, "✅")
+	assert.Contains(t, text, "Missed with time")
+	assert.Contains(t, text, "06:30")
+
+	// Verify instance is done with done_at = 06:30
+	got, err := store.GetInstanceByID(db, inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "done", got.Status)
+	require.NotNil(t, got.DoneAt)
+	assert.Equal(t, 6, got.DoneAt.In(time.UTC).Hour())
+	assert.Equal(t, 30, got.DoneAt.In(time.UTC).Minute())
+}
+
+// ---------------------------------------------------------------------------
+// Callback done_time tests (Phase 2: button "Done at..." on notifications)
+// ---------------------------------------------------------------------------
+
+func TestHandleCallbackDoneTime_StoresPending(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Done time test",
 		Times:  []string{"09:00"},
 		Repeat: "daily",
 	})
@@ -2585,20 +2798,138 @@ func TestHandleCallbackDoneInstCancel_RemovesButtons(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	upd := updateWithCallback("done_inst_n:"+inst.ID+":09:00", 12345, 12345, 100)
+	upd := updateWithCallback("done_time:"+inst.ID, 12345, 12345, 100)
 	h.HandleUpdate(upd)
 
-	// Should answer with empty text
+	// Should answer with empty text (success)
 	require.Len(t, mock.callbacks, 1)
 	assert.Empty(t, mock.callbacks[0].Text)
 
-	// Should have edited message to remove buttons
+	// Should have edited the notification message
 	require.GreaterOrEqual(t, len(mock.edits), 1)
-	_, ok := mock.edits[0].(tgbotapi.EditMessageReplyMarkupConfig)
-	require.True(t, ok, "expected EditMessageReplyMarkupConfig")
 
-	// Instance should still be pending
+	// Should have sent a message asking for time input
+	require.GreaterOrEqual(t, len(mock.sent), 1)
+	assert.Contains(t, mock.sent[0].Text, "HH:MM")
+
+	// Instance should still be pending (not done yet)
 	got, err := store.GetInstanceByID(db, inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "pending", got.Status)
+}
+
+//nolint:dupl // similar to TestHandleCallbackDoneTime_MissedToDone but tests pending→done
+func TestHandleCallbackDoneTime_Input_CompletesDone(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Time input test",
+		Times:  []string{"09:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		ForDate:     time.Now(),
+		TimeIndex:   0,
+		ScheduledAt: time.Now().Add(-2 * time.Hour),
+		Status:      "pending",
+	})
+	require.NoError(t, err)
+
+	// Step 1: Click "Done at..." button
+	cbUpd := updateWithCallback("done_time:"+inst.ID, 12345, 12345, 100)
+	h.HandleUpdate(cbUpd)
+
+	// Step 2: Send time text
+	textUpd := tgbotapi.Update{
+		Message: &tgbotapi.Message{
+			Text: "07:30",
+			Chat: &tgbotapi.Chat{ID: 12345},
+			From: &tgbotapi.User{ID: 12345},
+		},
+	}
+	mock.sent = nil
+	mock.callbacks = nil
+	h.HandleUpdate(textUpd)
+
+	// Should have sent ✅ confirmation
+	require.GreaterOrEqual(t, len(mock.sent), 1)
+	text := mock.sent[0].Text
+	assert.Contains(t, text, "✅")
+	assert.Contains(t, text, "Time input test")
+	assert.Contains(t, text, "07:30")
+
+	// Verify instance is done with done_at = 07:30
+	got, err := store.GetInstanceByID(db, inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "done", got.Status)
+	require.NotNil(t, got.DoneAt)
+	assert.Equal(t, 7, got.DoneAt.In(time.UTC).Hour())
+	assert.Equal(t, 30, got.DoneAt.In(time.UTC).Minute())
+}
+
+//nolint:dupl // similar to TestHandleCallbackDoneTime_Input_CompletesDone but tests missed→done
+func TestHandleCallbackDoneTime_MissedToDone(t *testing.T) {
+	db, mock, h := setup(t)
+
+	user, err := store.GetOrCreate(db, 12345)
+	require.NoError(t, err)
+	err = store.SetTimezone(db, user.ID, "UTC")
+	require.NoError(t, err)
+
+	r, err := store.Create(db, store.Reminder{
+		UserID: user.ID,
+		Label:  "Missed done time",
+		Times:  []string{"09:00"},
+		Repeat: "daily",
+	})
+	require.NoError(t, err)
+
+	inst, err := store.CreateInstance(db, store.ReminderInstance{
+		ReminderID:  r.ID,
+		ForDate:     time.Now(),
+		TimeIndex:   0,
+		ScheduledAt: time.Now().Add(-3 * time.Hour),
+		Status:      "missed",
+	})
+	require.NoError(t, err)
+
+	// Step 1: Click "Done at..." button on a missed notification
+	cbUpd := updateWithCallback("done_time:"+inst.ID, 12345, 12345, 100)
+	h.HandleUpdate(cbUpd)
+
+	// Step 2: Send time text
+	textUpd := tgbotapi.Update{
+		Message: &tgbotapi.Message{
+			Text: "08:00",
+			Chat: &tgbotapi.Chat{ID: 12345},
+			From: &tgbotapi.User{ID: 12345},
+		},
+	}
+	mock.sent = nil
+	mock.callbacks = nil
+	h.HandleUpdate(textUpd)
+
+	// Should have sent ✅ confirmation
+	require.GreaterOrEqual(t, len(mock.sent), 1)
+	text := mock.sent[0].Text
+	assert.Contains(t, text, "✅")
+	assert.Contains(t, text, "Missed done time")
+	assert.Contains(t, text, "08:00")
+
+	// Verify instance is done with done_at = 08:00
+	got, err := store.GetInstanceByID(db, inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "done", got.Status)
+	require.NotNil(t, got.DoneAt)
+	assert.Equal(t, 8, got.DoneAt.In(time.UTC).Hour())
+	assert.Equal(t, 0, got.DoneAt.In(time.UTC).Minute())
 }

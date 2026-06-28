@@ -332,7 +332,7 @@ func TestRecordSent_LastAttemptMarksMissed(t *testing.T) {
 	assert.Equal(t, "missed", got.Status)
 }
 
-func TestRecordSent_OnceReminderDeletes(t *testing.T) {
+func TestRecordSent_OnceReminderNotDeletedAnymore(t *testing.T) {
 	resetGlobals()
 	RepeatCount = 2
 	defer resetGlobals()
@@ -375,13 +375,15 @@ func TestRecordSent_OnceReminderDeletes(t *testing.T) {
 	err = e.RecordSent(n, 42, now)
 	require.NoError(t, err)
 
-	// Instance should be gone.
-	_, err = store.GetInstanceByID(db, inst.ID)
-	assert.ErrorContains(t, err, "not found")
+	// Instance should still exist but be "missed" (no longer deleted on miss).
+	got, err := store.GetInstanceByID(db, inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "missed", got.Status)
 
-	// Reminder should be gone.
-	_, err = store.GetByID(db, r.ID)
-	assert.ErrorContains(t, err, "not found")
+	// Reminder should still exist (no longer deleted on miss).
+	reminder, err := store.GetByID(db, r.ID)
+	require.NoError(t, err)
+	assert.Equal(t, r.ID, reminder.ID)
 }
 
 // ---------------------------------------------------------------------------

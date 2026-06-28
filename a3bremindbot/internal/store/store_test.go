@@ -530,7 +530,7 @@ func TestAddMessageID_NotFound(t *testing.T) {
 // AddMessageIDAndMarkMissedDeleteOnce tests
 // ---------------------------------------------------------------------------
 
-func TestAddMessageIDAndMarkMissedDeleteOnce_HappyPath(t *testing.T) {
+func TestAddMessageIDAndMarkMissedDeleteOnce_NowJustMisses(t *testing.T) {
 	db := newTestDB(t)
 
 	u, _ := GetOrCreate(db, 110)
@@ -539,17 +539,19 @@ func TestAddMessageIDAndMarkMissedDeleteOnce_HappyPath(t *testing.T) {
 
 	now := time.Now()
 
-	// Call the new atomic function.
+	// Call the atomic function.
 	err := AddMessageIDAndMarkMissedDeleteOnce(db, inst.ID, r.ID, 42, now)
 	require.NoError(t, err)
 
-	// Instance should be gone (deleted).
-	_, err = GetInstanceByID(db, inst.ID)
-	assert.ErrorContains(t, err, "not found")
+	// Instance should still exist (no longer deleted) but be "missed".
+	got, err := GetInstanceByID(db, inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "missed", got.Status)
 
-	// Reminder should be gone.
-	_, err = GetByID(db, r.ID)
-	assert.ErrorContains(t, err, "not found")
+	// Reminder should still exist (no longer deleted).
+	reminder, err := GetByID(db, r.ID)
+	require.NoError(t, err)
+	assert.Equal(t, r.ID, reminder.ID)
 }
 
 func TestAddMessageIDAndMarkMissedDeleteOnce_AlreadyDone(t *testing.T) {

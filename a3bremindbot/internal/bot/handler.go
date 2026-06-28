@@ -17,11 +17,19 @@ type BotAPI interface {
 	Request(c tgbotapi.Chattable) (*tgbotapi.APIResponse, error)
 }
 
-// pendingConfirmEntry holds data for a done HH:MM confirmation request.
+// pendingConfirmEntry holds data for a done confirmation request.
+// State "confirm": user needs to send +/yes/y to confirm.
+// State "waiting_time": user needs to send HH:MM as completion time.
 type pendingConfirmEntry struct {
 	InstanceID string
 	DoneAt     time.Time
+	State      string // "confirm" or "waiting_time"
 }
+
+const (
+	stateConfirm     = "confirm"
+	stateWaitingTime = "waiting_time"
+)
 
 // Handler управляет входящими сообщениями от Telegram.
 type Handler struct {
@@ -72,6 +80,21 @@ func (h *Handler) HandleUpdate(update tgbotapi.Update) {
 	if isConfirmation(lower) {
 		if _, ok := h.pendingConfirm.Load(update.Message.Chat.ID); ok {
 			h.handleConfirmDoneTime(update)
+			return
+		}
+	}
+
+	// 2.5. Если ожидаем ввод времени — проверяем формат HH:MM
+	if val, ok := h.pendingConfirm.Load(update.Message.Chat.ID); ok {
+		entry, ok := val.(pendingConfirmEntry)
+		if ok && entry.State == stateWaitingTime {
+			parsed, err := time.ParseInLocation("15:04", text, time.UTC)
+			if err == nil {
+				h.handleDoneTimeInput(update, text, parsed)
+				return
+			}
+			// Невалидный формат — игнорируем, не очищаем pending (пользователь может исправить)
+			h.sendText(update.Message.Chat.ID, "Неверный формат. Введи время в формате HH:MM (например, 14:30)")
 			return
 		}
 	}

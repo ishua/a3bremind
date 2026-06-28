@@ -11,6 +11,7 @@ import (
 )
 
 // handleListInstances обрабатывает /list instances <reminder_id>.
+// handleListInstances обрабатывает /list instances <reminder_id>.
 // Показывает все Instance указанного Reminder за сегодня с инлайн-кнопками.
 func (h *Handler) handleListInstances(update tgbotapi.Update) {
 	user, err := store.GetOrCreate(h.db, update.Message.Chat.ID)
@@ -76,6 +77,7 @@ func (h *Handler) handleListInstances(update tgbotapi.Update) {
 	fmt.Fprintf(&sb, "💊 %s\n", reminder.Label)
 
 	var buttons []tgbotapi.InlineKeyboardButton
+	//nolint:dupl // duplicated in callbacks.go, kept for clarity
 	for _, inst := range todayInstances {
 		scheduledStr := inst.ScheduledAt.In(loc).Format("15:04")
 
@@ -89,8 +91,12 @@ func (h *Handler) handleListInstances(update tgbotapi.Update) {
 			}
 			fmt.Fprintf(&sb, "❌ %s — %s…\n", scheduledStr, shortID)
 			buttons = append(buttons, tgbotapi.NewInlineKeyboardButtonData(
-				fmt.Sprintf("✅ %s", scheduledStr),
-				fmt.Sprintf("done_inst:%s:%s", inst.ID, scheduledStr),
+				fmt.Sprintf("✅ Now %s", scheduledStr),
+				fmt.Sprintf("done_now:%s", inst.ID),
+			))
+			buttons = append(buttons, tgbotapi.NewInlineKeyboardButtonData(
+				fmt.Sprintf("⏰ Set %s", scheduledStr),
+				fmt.Sprintf("done_custom:%s", inst.ID),
 			))
 		default:
 			shortID := inst.ID
@@ -99,8 +105,12 @@ func (h *Handler) handleListInstances(update tgbotapi.Update) {
 			}
 			fmt.Fprintf(&sb, "⏳ %s — %s…\n", scheduledStr, shortID)
 			buttons = append(buttons, tgbotapi.NewInlineKeyboardButtonData(
-				fmt.Sprintf("✅ %s", scheduledStr),
-				fmt.Sprintf("done_inst:%s:%s", inst.ID, scheduledStr),
+				fmt.Sprintf("✅ Now %s", scheduledStr),
+				fmt.Sprintf("done_now:%s", inst.ID),
+			))
+			buttons = append(buttons, tgbotapi.NewInlineKeyboardButtonData(
+				fmt.Sprintf("⏰ Set %s", scheduledStr),
+				fmt.Sprintf("done_custom:%s", inst.ID),
 			))
 		}
 	}

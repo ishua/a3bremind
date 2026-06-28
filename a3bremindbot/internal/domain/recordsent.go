@@ -18,14 +18,10 @@ func (e *Engine) recordSent(notification Notification, messageID int, sentAt tim
 
 	if msgCount+1 >= notification.MaxAttempts {
 		// Last notification — atomically add message ID and mark as missed.
-		if notification.ReminderRepeat == "once" {
-			if err := store.AddMessageIDAndMarkMissedDeleteOnce(e.db, notification.InstanceID, notification.ReminderID, messageID, sentAt); err != nil {
-				return err
-			}
-		} else {
-			if err := store.AddMessageIDAndSetMissed(e.db, notification.InstanceID, messageID, sentAt); err != nil {
-				return err
-			}
+		// once-reminders are NOT deleted anymore; they stay as "missed" so users can
+		// mark them done later (same as daily).
+		if err := store.AddMessageIDAndSetMissed(e.db, notification.InstanceID, messageID, sentAt); err != nil {
+			return err
 		}
 	} else {
 		// Not the last repeat — just add the message ID.

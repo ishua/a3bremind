@@ -19,16 +19,19 @@ func NewNotifier(bot BotAPI) *Notifier {
 }
 
 // Notify отправляет структурированное уведомление пользователю через Telegram
-// с inline-кнопками ✅ Done / ⏰ Snooze / ⏭ Skip.
+// с inline-кнопками ✅ Done / ⏰ Done at... / 💤 Snooze / ⏭ Skip.
 func (n *Notifier) Notify(recipientID int64, notification domain.Notification) (int, time.Time, error) {
 	text := formatNotificationText(notification)
 	msg := tgbotapi.NewMessage(recipientID, text)
 
-	// Inline-кнопки: Done, Snooze, Skip с callback_data = action:UUID
+	// Inline-кнопки: Done, Done at, Snooze, Skip
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("✅ Done", "done:"+notification.InstanceID),
-			tgbotapi.NewInlineKeyboardButtonData("⏰ Snooze", "snooze:"+notification.InstanceID),
+			tgbotapi.NewInlineKeyboardButtonData("⏰ Done at...", "done_time:"+notification.InstanceID),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("💤 Snooze", "snooze:"+notification.InstanceID),
 			tgbotapi.NewInlineKeyboardButtonData("⏭ Skip", "skip:"+notification.InstanceID),
 		),
 	)

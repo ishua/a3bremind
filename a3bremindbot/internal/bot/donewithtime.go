@@ -80,6 +80,7 @@ func (h *Handler) handleDoneWithTime(update tgbotapi.Update) {
 	entry := pendingConfirmEntry{
 		InstanceID: instance.ID,
 		DoneAt:     doneAt,
+		State:      stateConfirm,
 	}
 	h.pendingConfirm.Store(update.Message.Chat.ID, entry)
 
@@ -122,7 +123,7 @@ func (h *Handler) handleConfirmDoneTime(update tgbotapi.Update) {
 	}
 
 	// Проверяем статус
-	if instance.Status != "pending" {
+	if instance.Status != "pending" && instance.Status != "missed" {
 		h.sendText(update.Message.Chat.ID, "Это напоминание уже выполнено")
 		return
 	}
@@ -174,6 +175,102 @@ func (h *Handler) handleConfirmDoneTime(update tgbotapi.Update) {
 	}
 
 	// Уведомление о рескедуле
+	if reminder.MinGap != nil && updated.DoneAt != nil {
+		h.sendRescheduleNotification(update.Message.Chat.ID, user, reminder, updated)
+	}
+}
+
+// handleDoneTimeInput обрабатывает ввод времени HH:MM после нажатия «Done at...» на кнопке.
+func (h *Handler) handleDoneTimeInput(update tgbotapi.Update, timeStr string, parsedTime time.Time) {
+	val, ok := h.pendingConfirm.LoadAndDelete(update.Message.Chat.ID)
+	if !ok {
+		return
+	}
+
+	entry, ok := val.(pendingConfirmEntry)
+	if !ok {
+		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
+		return
+	}
+
+	user, err := store.GetOrCreate(h.db, update.Message.Chat.ID)
+	if err != nil {
+		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
+		return
+	}
+
+	if user.Timezone == "" {
+		h.sendText(update.Message.Chat.ID, "Сначала укажи часовой пояс.")
+		return
+	}
+
+	loc, err := time.LoadLocation(user.Timezone)
+	if err != nil {
+		h.sendText(update.Message.Chat.ID, "Ошибка часового пояса.")
+		return
+	}
+
+	now := time.Now().In(loc)
+	doneAt := time.Date(now.Year(), now.Month(), now.Day(), parsedTime.Hour(), parsedTime.Minute(), 0, 0, loc)
+
+	if doneAt.After(now) {
+		h.sendText(update.Message.Chat.ID, "Указанное время в будущем. Используй прошедшее время.")
+		return
+	}
+
+	instance, err := store.GetInstanceByID(h.db, entry.InstanceID)
+	if err != nil {
+		h.sendText(update.Message.Chat.ID, "Не удалось найти напоминание.")
+		return
+	}
+
+	if instance.Status != "pending" && instance.Status != "missed" {
+		h.sendText(update.Message.Chat.ID, "Это напоминание уже выполнено.")
+		return
+	}
+
+	reminder, err := store.GetByID(h.db, instance.ReminderID)
+	if err != nil {
+		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
+		return
+	}
+
+	tx, err := h.db.Begin()
+	if err != nil {
+		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
+		return
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	if err := store.SetStatusWithDoneAt(tx, entry.InstanceID, "done", doneAt); err != nil {
+		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
+		return
+	}
+
+	updated, err := store.GetInstanceByID(tx, entry.InstanceID)
+	if err != nil {
+		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
+		return
+	}
+
+	warning, err := domain.NextInstance(tx, updated, time.Now())
+	if err != nil {
+		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		h.sendText(update.Message.Chat.ID, "Произошла ошибка. Попробуй позже.")
+		return
+	}
+
+	h.sendText(update.Message.Chat.ID,
+		fmt.Sprintf("✅ %s — записано в %s", reminder.Label, doneAt.Format("15:04")))
+
+	if warning != "" {
+		h.sendText(update.Message.Chat.ID, fmt.Sprintf("⚠️ %s — пропустить?", warning))
+	}
+
 	if reminder.MinGap != nil && updated.DoneAt != nil {
 		h.sendRescheduleNotification(update.Message.Chat.ID, user, reminder, updated)
 	}

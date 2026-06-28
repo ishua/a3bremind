@@ -272,9 +272,10 @@ func AddMessageID(db Querier, id string, messageID int, sentAt time.Time) error 
 	return checkRowsAffected(res, "reminder_instance", id)
 }
 
-// AddMessageIDAndMarkMissedDeleteOnce atomically adds a message ID, marks the instance as missed,
-// and deletes the reminder (all instances + reminder row) in a single transaction.
-// Intended for once-reminders to prevent race conditions between the scheduler and the done handler.
+// AddMessageIDAndMarkMissedDeleteOnce atomically adds a message ID and marks the instance as missed.
+// Previously it also deleted the reminder and all instances for once-reminders.
+// Now it just marks as missed (same as AddMessageIDAndSetMissed), so users can mark
+// once-reminder instances as done later even after all notifications are exhausted.
 func AddMessageIDAndMarkMissedDeleteOnce(db *sql.DB, instanceID, reminderID string, messageID int, sentAt time.Time) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -282,7 +283,6 @@ func AddMessageIDAndMarkMissedDeleteOnce(db *sql.DB, instanceID, reminderID stri
 	}
 	defer tx.Rollback() //nolint:errcheck // deferred rollback is idiomatic
 
-	// Add message ID and set missed atomically, only if still pending.
 	entry := MessageIDEntry{MessageID: messageID, SentAt: sentAt.Unix()}
 	entryJSON, err := json.Marshal(entry)
 	if err != nil {
@@ -301,24 +301,6 @@ func AddMessageIDAndMarkMissedDeleteOnce(db *sql.DB, instanceID, reminderID stri
 	if n == 0 {
 		// Already handled by done handler — skip.
 		return nil
-	}
-
-	// Delete all instances for this reminder.
-	if _, err := tx.Exec(`DELETE FROM reminder_instances WHERE reminder_id = ?`, reminderID); err != nil {
-		return fmt.Errorf("delete reminder instances: %w", err)
-	}
-
-	// Delete the reminder itself.
-	res, err = tx.Exec(`DELETE FROM reminders WHERE id = ?`, reminderID)
-	if err != nil {
-		return fmt.Errorf("delete reminder: %w", err)
-	}
-	n, err = res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("rows affected: %w", err)
-	}
-	if n == 0 {
-		return fmt.Errorf("reminder %q not found", reminderID)
 	}
 
 	return tx.Commit()

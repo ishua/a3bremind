@@ -37,7 +37,7 @@ func (h *Handler) handleDone(update tgbotapi.Update) {
 	}
 
 	// Проверяем статус
-	if instance.Status != "pending" {
+	if instance.Status != "pending" && instance.Status != "missed" {
 		h.sendText(update.Message.Chat.ID, "Это напоминание уже выполнено")
 		return
 	}
